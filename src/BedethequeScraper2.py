@@ -28,12 +28,15 @@ from urllib2 import *
 from HTMLParser import HTMLParser
 
 clr.AddReference('System')
+clr.AddReference('System.Web.Extensions')
 clr.AddReference('System.Windows.Forms')
 from System.Windows.Forms import * 
 
 from System.IO import FileInfo, File
+from System.Diagnostics import ProcessStartInfo, Process
 from System.Diagnostics.Process import Start
-from System.Net import HttpWebRequest, Cookie, DecompressionMethods
+from System.Net import HttpWebRequest
+from System.Net.Sockets import TcpClient, SocketType, ProtocolType
 from System.Threading import Thread, ThreadStart
 from System import Math
 
@@ -1521,94 +1524,219 @@ def parseName(extractedName):
 
     return checkWebChar(name).strip()
 
-def _run_fetcher(file_name, arguments, timeout_ms):
-    """
-    Starts `file_name arguments`, capturing stdout (the HTML payload) and
-    stderr (diagnostics) on their own plain background threads, so neither
-    pipe can fill up and stall the child process (large HTML pages can
-    easily exceed the OS pipe buffer if nothing is draining it).
+DAEMON_PORT = 56789
+DAEMON_STARTWAIT_SECS = 20
+DAEMON_HOST = "127.0.0.1"
+DAEMON_CONNECT_TIMEOUT_MS = 5000
+DAEMON_RECV_TIMEOUT_MS = 120000
+# PyInstaller single-file build of BedethequeFetcher.py, preferred when present.
+DAEMON_EXE = "BedethequeFetcher.exe"
+# Name of the daemon target currently started by launch_daemon_thread
+# ("", DAEMON_EXE, or "BedethequeFetcher.py").
+daemon_running_name = ""
 
-    This deliberately avoids Process.OutputDataReceived/BeginOutputReadLine.
-    This plugin runs on the host application's STA UI thread, and .NET
-    automatically marshals those events back onto whichever thread created
-    the Process, if that thread owns a message loop - which a WinForms UI
-    thread does. Since this function blocks that same thread while
-    waiting, those marshaled callbacks could never actually run, so the
-    output was never captured: a real deadlock, not a hypothetical one.
-    A plain background Thread doing a blocking Stream read has nothing to
-    do with the STA apartment/message loop, so it can't get stuck on it.
+_daemon_json_serializer = System.Web.Script.Serialization.JavaScriptSerializer()
+_daemon_json_serializer.MaxJsonLength = System.Int32.MaxValue
 
-    Returns (exit_code, stdout_text, stderr_text).
-    """
-    start_info = System.Diagnostics.ProcessStartInfo()
-    start_info.FileName = file_name
-    start_info.Arguments = arguments
-    start_info.UseShellExecute = False
-    start_info.CreateNoWindow = True
-    start_info.RedirectStandardOutput = True
-    start_info.RedirectStandardError = True
-    start_info.StandardOutputEncoding = System.Text.Encoding.UTF8
-    start_info.StandardErrorEncoding = System.Text.Encoding.UTF8
+def _script_dir():
+    """Directory holding this script (and the daemon: BedethequeFetcher.exe
+    and/or BedethequeFetcher.py)."""
+    return __file__[:-len('BedethequeScraper2.py')]
 
-    process = System.Diagnostics.Process.Start(start_info)
-
-    stdout_result = [None]
-    stderr_result = [None]
-    read_exceptions = []
-
-    def read_stdout():
+def is_daemon_running():
+    """True if something (BedethequeFetcher) answers on its TCP port."""
+    try:
+        client = TcpClient()
         try:
-            stdout_result[0] = process.StandardOutput.ReadToEnd()
-        except Exception, e:
-            read_exceptions.append(e)
+            client.Connect("127.0.0.1", DAEMON_PORT)
+        finally:
+            client.Close()
+        return True
+    except:
+        return False
 
-    def read_stderr():
-        try:
-            stderr_result[0] = process.StandardError.ReadToEnd()
-        except Exception, e:
-            read_exceptions.append(e)
+def _daemon_psi(what, args = ""):
+    """ProcessStartInfo to start the daemon (the PyInstaller .exe, or a
+    Python 3 script through ``python -I``). ``what`` is either the daemon's
+    log name for a script ("BedethequeFetcher.py"), in which case the script
+    path is passed as the sole argument and ``python`` is resolved via PATH,
+    or the full path of a .exe to run directly. Common settings keep the
+    process hidden and its output pipes redirected so a background thread
+    can drain them."""
+    psi = ProcessStartInfo()
+    if what.endswith(".py"):
+        psi.FileName = "python"
+        # -I (isolated mode): keep this folder off sys.path, because it contains
+        # IronPython 2 stdlib shims (types.py, string.py, os.py, ...) that would
+        # shadow the real Python 3 stdlib and crash the script on first import.
+        psi.Arguments = "-I " + args
+    else:
+        psi.FileName = what
+        psi.Arguments = args
+    psi.UseShellExecute = False
+    psi.RedirectStandardOutput = True
+    psi.RedirectStandardError = True
+    psi.CreateNoWindow = True
+    return psi
 
-    stdout_thread = System.Threading.Thread(System.Threading.ThreadStart(read_stdout))
-    stdout_thread.IsBackground = True
+def launch_daemon_thread():
+    """Launch BedethequeFetcher (same folder as this script) hidden in the
+    background, with a new .NET thread draining its output pipes so the
+    daemon (started as an external process) never blocks on a full pipe
+    buffer. The PyInstaller build ``BedethequeFetcher.exe`` is preferred; if
+    it is not present, the source script ``BedethequeFetcher.py`` (run with
+    Python 3) is launched instead. Returns the Process, or None if it could
+    not be started."""
+    global daemon_running_name
+    exe = _script_dir() + DAEMON_EXE
+    script = _script_dir() + "BedethequeFetcher.py"
 
-    stderr_thread = System.Threading.Thread(System.Threading.ThreadStart(read_stderr))
-    stderr_thread.IsBackground = True
+    if File.Exists(exe):
+        # Full path: a bare exe name would not resolve to this folder.
+        what, args = exe, ""
+    elif File.Exists(script):
+        what, args = "BedethequeFetcher.py", '"' + script + '"'
+    else:
+        daemon_running_name = ""
+        log_BD(DAEMON_EXE + " / BedethequeFetcher.py not found in " + _script_dir(), "", 1)
+        return None
 
     try:
-        # Start draining both pipes *before* waiting on the process, so a
-        # large page can never fill a buffer and stall the child.
-        stdout_thread.Start()
-        stderr_thread.Start()
+        proc = Process()
+        proc.StartInfo = _daemon_psi(what, args)
+        proc.Start()
+    except:
+        cError = debuglogOnError()
+        log_BD("Failed to start " + what, cError, 1)
+        return None
 
-        if not process.WaitForExit(timeout_ms):
-            try:
-                process.Kill()
-            except:
-                pass
-
-            raise Exception("Fetcher timed out after " + str(timeout_ms / 1000) + " seconds")
-
-        # The process has already exited, so both ReadToEnd() calls
-        # should return almost immediately (they only block until EOF).
-        # Thread.Join, unlike Thread.Sleep, pumps the STA message queue
-        # while it waits, so it's safe to call from this thread.
-        stdout_thread.Join(10000)
-        stderr_thread.Join(10000)
-
-        if read_exceptions:
-            raise read_exceptions[0]
-
-        return (
-            process.ExitCode,
-            stdout_result[0] or '',
-            stderr_result[0] or '',
-        )
-    finally:
+    def _drain():
+        err = ""
         try:
-            process.Dispose()
+            err = proc.StandardError.ReadToEnd()
+        except:
+            pass
+        try:
+            proc.StandardOutput.ReadToEnd()
+        except:
+            pass
+        try:
+            proc.WaitForExit()
+            if proc.ExitCode and err.strip():
+                log_BD(what + " (pid " + str(proc.Id) + ") exited with code " + str(proc.ExitCode) + " -- " + err.strip()[:2000], "", 1)
         except:
             pass
 
+    drain = Thread(ThreadStart(_drain))
+    drain.IsBackground = True
+    drain.Start()
+    # Log the short name (script name or exe file name, not a full path).
+    display = what[len(_script_dir()):] if what.startswith(_script_dir()) else what
+    daemon_running_name = display
+    debuglog(display + " launched (pid " + str(proc.Id) + ", port " + str(DAEMON_PORT) + ")")
+    return proc
+
+def ensure_fetch_daemon():
+    """Make sure BedethequeFetcher is up; launch it in a new thread if not."""
+    if is_daemon_running():
+        return True
+
+    proc = launch_daemon_thread()
+    if proc is None:
+        return False
+
+    # Probe the port from a background thread (Thread.Sleep on the STA
+    # calling thread would not pump messages) and join it to wait.
+    end = datetime.now() + timedelta(seconds=DAEMON_STARTWAIT_SECS)
+
+    def _wait_port():
+        while not is_daemon_running() and datetime.now() < end:
+            Thread.Sleep(250)
+
+    waiter = Thread(ThreadStart(_wait_port))
+    waiter.IsBackground = True
+    waiter.Start()
+    waiter.Join((DAEMON_STARTWAIT_SECS + 5) * 1000)
+    if is_daemon_running():
+        debuglog("BedethequeFetcher ready on port " + str(DAEMON_PORT))
+        return True
+
+    # The port never came up: kill the stuck daemon so the next scrape does
+    # not keep spawning a new one.
+    try:
+        proc.Kill()
+    except:
+        pass
+    name = daemon_running_name if daemon_running_name else "fetch daemon"
+    log_BD(name + " (pid " + str(proc.Id) + ") did not answer on 127.0.0.1:" + str(DAEMON_PORT) + " after " + str(DAEMON_STARTWAIT_SECS) + " s; killed", "", 1)
+    return False
+
+def _daemon_request_line(url):
+    """Build the one-line JSON request sent to BedethequeFetcher daemon
+    (``{"url": "..."}\r\n``), serialized through the .NET JavaScriptSerializer."""
+    return System.Text.Encoding.UTF8.GetBytes(_daemon_json_serializer.Serialize({"url": url}) + "\r\n")
+
+def _daemon_json_field(line, key):
+    """Return the string value of ``key`` in the daemon's flat one-line JSON
+    reply, or None when the key is absent (the success reply carries no 'error')."""
+    reply = _daemon_json_serializer.Deserialize(line, System.Collections.Generic.Dictionary[str, System.Object])
+    found, value = reply.TryGetValue(key)
+    return System.Convert.ToString(value) if found else None
+
+def fetch(url):
+    """Fetch a bedetheque page by asking the local BedethequeFetcher daemon over
+    its TCP socket, speaking its line-delimited JSON protocol directly:
+
+        client > daemon:  {"url": "https://..."}\r\n
+        daemon > client:  {"url": "...", "html": "..."}\r\n   or   {"error": "..."}\r\n
+
+    The request is NOT sent to bedetheque.com from this script (a direct
+    request is rejected with a 403): the daemon owns the cookies / user-agent
+    and performs the real fetch.
+    IronPython talks to the daemon through a raw ``TcpClient`` socket.
+    Before talking to the daemon, it is checked and launched in a background
+    thread (same directory as this script) if it is not running.
+    """
+    if not ensure_fetch_daemon():
+        raise RuntimeError("BedethequeFetcher is not running on 127.0.0.1:" + str(DAEMON_PORT) + " and could not be started")
+
+    if isinstance(url, str):
+        url = url.decode("utf-8", "replace")
+    request_line = _daemon_request_line(url)
+
+    client = TcpClient()
+    try:
+        client.Connect(DAEMON_HOST, DAEMON_PORT)
+
+        stream = client.GetStream()
+        stream.WriteTimeout = DAEMON_CONNECT_TIMEOUT_MS
+        stream.ReadTimeout = DAEMON_RECV_TIMEOUT_MS
+
+        # Send the JSON request line (.NET Stream.Write is void: it writes
+        # all requested bytes or raises, no partial-write loop needed).
+        stream.Write(request_line, 0, request_line.Length)
+
+        # Read the daemon's JSON reply line (explicit UTF-8, no BOM sniffing).
+        reader = System.IO.StreamReader(stream, System.Text.Encoding.UTF8)
+        line = reader.ReadLine()
+    finally:
+        try:
+            client.Close()
+        except:
+            pass
+
+    if not line:
+        raise RuntimeError("BedethequeFetcher closed the connection without responding for " + url)
+    line = line.strip()
+
+    error = _daemon_json_field(line, "error")
+    if error is not None:
+        raise RuntimeError("Fetch failed for " + url + ": " + error)
+
+    html = _daemon_json_field(line, "html")
+    if html is None:
+        raise RuntimeError("Malformed BedethequeFetcher response (no 'html' field) for " + url)
+    return html
 
 def _read_url(url, bSingle):
     page = ''
@@ -1628,50 +1756,7 @@ def _read_url(url, bSingle):
     debuglog("Final fetcher URL: " + target_url)
 
     try:
-        plugin_dir = System.IO.Path.GetDirectoryName(__file__)
-        fetcher_path = System.IO.Path.Combine(plugin_dir, "BedethequeFetcher.exe")
-
-        if System.IO.File.Exists(fetcher_path):
-            file_name = fetcher_path
-            arguments = '"' + target_url + '"'
-        else:
-            # Dev-only fallback: run the fetcher straight from its .py
-            # source with the system Python interpreter. The real release
-            # ships BedethequeFetcher.exe alongside the plugin and should
-            # never need this path or any extra dependency on the host.
-            fetcher_script = System.IO.Path.GetFullPath(System.IO.Path.Combine(plugin_dir, "BedethequeFetcher.py"))
-
-            if not System.IO.File.Exists(fetcher_script):
-                raise Exception(
-                    "Neither BedethequeFetcher.exe nor BedethequeFetcher.py "
-                    "were found: " + fetcher_path + " / " + fetcher_script
-                )
-
-            debuglog(
-                "BedethequeFetcher.exe not found, falling back to "
-                "python for development: " + fetcher_script
-            )
-
-            file_name = "python"
-            arguments = '"' + fetcher_script + '" "' + target_url + '"'
-            debuglog("Dev-only fallback: running fetcher via python with arguments: " + arguments)
-
-        debuglog("Fetcher URL: " + target_url)
-
-        exit_code, stdout_text, stderr_text = _run_fetcher(
-            file_name,
-            arguments,
-            45000
-        )
-
-        if exit_code != 0:
-            raise Exception("BedethequeFetcher exit code " + str(exit_code) + ": " + stderr_text)
-
-        if not stdout_text:
-            raise Exception("BedethequeFetcher did not return any content")
-
-        page = stdout_text
-
+        page = fetch(target_url)
         Application.DoEvents()
 
         if bStopit:
@@ -3194,7 +3279,7 @@ def Capitalize(s):
 
 def ThemeMe(control):
     if ComicRack.App.ProductVersion >= '0.9.182':
-            ComicRack.Theme.ApplyTheme(control)
+        ComicRack.Theme.ApplyTheme(control)
 
 
 class FormType():
