@@ -1,9 +1,4 @@
-# -*- coding: utf-8 -*-
-#@Name Bedetheque Scraper 2
-#@Key Bedetheque2
-#@Hook    Books, Editor
-#@Image BD2.png
-#@Description Search on wwww.bedetheque.com informations about the selected eComics
+﻿# -*- coding: utf-8 -*-
 #
 # Bedetheque Scraper 2 - Avril 2021- v 5.4 -> by kiwi13 & maforget
 #
@@ -28,12 +23,15 @@ from urllib2 import *
 from HTMLParser import HTMLParser
 
 clr.AddReference('System')
+clr.AddReference('System.Web.Extensions')
 clr.AddReference('System.Windows.Forms')
 from System.Windows.Forms import * 
 
 from System.IO import FileInfo, File
+from System.Diagnostics import ProcessStartInfo, Process
 from System.Diagnostics.Process import Start
-from System.Net import HttpWebRequest, Cookie, DecompressionMethods
+from System.Net import HttpWebRequest
+from System.Net.Sockets import TcpClient, SocketType, ProtocolType
 from System.Threading import Thread, ThreadStart
 from System import Math
 
@@ -48,9 +46,17 @@ clr.AddReference('System.Xml')
 from System.Xml import *
 BasicXml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><configuration></configuration>"
 
-CookieContainer = System.Net.CookieContainer()
-
 VERSION = "6.05"
+
+class SerieChoice:
+    NeverAsk = 0
+    AlwaysAsk = 1
+    AskWhenNeeded = 2
+
+class EditionChoice:
+    NeverAsk = 0
+    AlwaysAsk = 1
+    AskWhenNeeded = 2
 
 SHOWRENLOG = False
 SHOWDBGLOG = False
@@ -83,8 +89,9 @@ CBTitle = True
 CBSeries = True
 CBDefault = False
 CBRescrape = False
-AllowUserChoice = "2"
-PopUpEditionForm = False
+CBStop = True
+EditionChoiceSetting = EditionChoice.AskWhenNeeded
+SerieChoiceSetting = SerieChoice.AskWhenNeeded
 ARTICLES = "Le,La,Les,L',The"
 FORMATARTICLES = True
 SUBPATT = " - - "
@@ -101,10 +108,11 @@ PadNumber = "0"
 Serie_Resume = ""
 ONESHOTFORMAT = False
 bStopit = False
-AlwaysChooseSerie = False
 TimerExpired = False
 SkipAlbum = False
-log_messages = []
+SkipSummaryReport = False
+log_BD = None
+log_Debug = None
 
 ########################################
 # Nombres auteurs
@@ -126,6 +134,9 @@ ALBUM_INFO_PATTERN = r'<meta\sname="description"\scontent="(.*?)"'
 # Encart "Informations sur l'album"
 INFOS_ALBUMS_PATTERN = r'<ul class="infos-albums">.+?</ul>'
 INFOS_ALBUMS = re.compile(INFOS_ALBUMS_PATTERN, re.IGNORECASE | re.DOTALL)
+
+SERIE_ORIGIN_PATTERN = r'<span><i\sclass="icon-globe"></i>(.*?)</span>'
+SERIE_ORIGIN = re.compile(SERIE_ORIGIN_PATTERN, re.IGNORECASE)
 
 SERIE_LANGUE_PATTERN = r'class="flag"/>(.*?)</span>'
 SERIE_LANGUE = re.compile(SERIE_LANGUE_PATTERN, re.IGNORECASE)
@@ -155,8 +166,8 @@ SERIE_HEADER2_PATTERN = r'<h3(.+?)</p'
 SERIE_HEADER2 = re.compile(SERIE_HEADER2_PATTERN, re.IGNORECASE | re.MULTILINE | re.DOTALL)
 
 # Info Serie for Quickscrape
-
-SERIE_QSERIE_PATTERN = r'<h1>\s*<a href="serie-[^\.]+\.html">([^"<>]+)</a>'
+SERIE_QSERIE_PATTERN = r'<h1>\s*<a href="([^"]+)"[^>]*>\s*([^<]+)\s*</a'
+SERIE_QSERIE = re.compile(SERIE_QSERIE_PATTERN, re.IGNORECASE | re.MULTILINE | re.DOTALL)
 
 # Info Album from Album
 INFO_SERIENAMENUMBER_ALBUM_PATTERN = r'<span\sclass="type">S.*?rie\s:\s</span>\s?(.*?)<.*?id="%s">.*?<div\sclass="titre">(?:(.*?)<.*?numa">(.*?)</span>\.?\s?)?(.*?)<'
@@ -272,58 +283,48 @@ REVUE_DEPOT = re.compile(REVUE_DEPOT_PATTERN, re.IGNORECASE | re.MULTILINE | re.
 REVUE_PERIOD_PATTERN = r'<label>P.riodicit.\s:\s??</label>(.*?)</'
 REVUE_PERIOD = re.compile(REVUE_PERIOD_PATTERN, re.IGNORECASE | re.MULTILINE | re.DOTALL)
 
+#@Name Bedetheque Scraper 2
+#@Key Bedetheque2
+#@Hook    Books, Editor
+#@Image BD2.png
+#@Description Search on wwww.bedetheque.com informations about the selected eComics
 def BD_start(books):
+    global nRenamed, nIgnored
 
-    global nRenamed, nIgnored, aWord
-
-    aWord = Translate()
-
-    if not LoadSetting():
-        return
-
-    bdlogfile = ""
-    debuglogfile = ""
-
-    if not books:
-        Result = MessageBox.Show(ComicRack.MainWindow, Trans(1),Trans(2), MessageBoxButtons.OK, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button1)
-        return
-
-    bdlogfile = (__file__[:-len('BedethequeScraper2.py')] + "BD2_Rename_Log.txt")
-    if FileInfo(bdlogfile).Exists and FileInfo(bdlogfile).Length > RENLOGMAX:
-        Result = MessageBox.Show(ComicRack.MainWindow, Trans(3), Trans(4), MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button1)
-        if Result == DialogResult.Yes:
-            File.Delete(bdlogfile)
-
-    debuglogfile = (__file__[:-len('BedethequeScraper2.py')] + "BD2_debug_log.txt")
-    if FileInfo(debuglogfile).Exists and FileInfo(debuglogfile).Length > DBGLOGMAX:
-        Result = MessageBox.Show(ComicRack.MainWindow, Trans(5), Trans(6), MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button1)
-        if Result == DialogResult.Yes:
-            File.Delete(debuglogfile)
-
-    nRenamed = 0
-    nIgnored = 0
-    
-    if CBRescrape:
-        Result = MessageBox.Show(ComicRack.MainWindow, Trans(139), Trans(138), MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button1)
-        if Result == DialogResult.No:
+    with ReportFileManager() as log_BD, DebugFileManager() as log_Debug:
+        if not LoadSetting():
             return
 
-    if books:
-        WorkerThread(books)
+        log_BD.checksize(RENLOGMAX)
+        log_Debug.checksize(DBGLOGMAX)
 
-    else:
-        if DBGONOFF:print Trans(15) +"\n"
-        log_BD(Trans(15), "", 1)
+        if not books:
+            Result = MessageBox.Show(ComicRack.MainWindow, Trans(1),Trans(2), MessageBoxButtons.OK, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button1)
+            return
+
+        nRenamed = 0
+        nIgnored = 0
+
+        if CBRescrape:
+            Result = MessageBox.Show(ComicRack.MainWindow, Trans(139), Trans(138), MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button1)
+            if Result == DialogResult.No:
+                return
+
+        if books:
+            WorkerThread(books)
+
+        else:
+            log_Debug.log(Trans(15) +"\n")
+            log_BD.log(Trans(15), "", 1)
 
 def WorkerThread(books):
 
-    global AlbumNumNum, dlgNumber, dlgName, dlgNameClean, nRenamed, nIgnored, dlgAltNumber, bError
-    global PickSeries, serie_rech_prev, Shadow1, Shadow2, log_messages
+    global sAlbumNum, sSerieName, sSerieNameClean, nRenamed, nIgnored, sAlbumAltNum, bError
+    global PickSeries, serie_rech_prev, Shadow1, Shadow2
 
     t = Thread(ThreadStart(thread_proc))
 
     bError = False
-    log_messages = []
 
     Shadow1 = False
     Shadow2 = False
@@ -338,11 +339,11 @@ def WorkerThread(books):
         serieUrl = None
         nOrigBooks = books.Count
 
-        log_BD(Trans(7) + str(nOrigBooks) +  Trans(8), "\n============ " + str(datetime.now().strftime("%A %d %B %Y %H:%M:%S")) + " ===========", 0)
+        log_BD.log(Trans(7) + str(nOrigBooks) +  Trans(8), "\n============ " + str(datetime.now().strftime("%A %d %B %Y %H:%M:%S")) + " ===========", 0)
 
         i = 0
 
-        debuglog(chr(10) + "=" * 25 + "- Begin! -" + "=" * 25 + chr(10))
+        log_Debug.log(chr(10) + "=" * 25 + "- Begin! -" + "=" * 25 + chr(10))
 
         nTIMEDOUT = 0
         
@@ -353,78 +354,65 @@ def WorkerThread(books):
         for book in books:
 
             TimeBookStart = clock()
-            debuglog("v" * 60)
+            log_Debug.log("v" * 60)
 
             if bStopit or (nTIMEDOUT == int(TIMEOUT)):
-                if bStopit: debuglog("Cancelled from WorkerThread Start")
+                if bStopit: log_Debug.log("Cancelled from WorkerThread Start")
                 return
 
             nTIMEDOUT += 1
 
             if book.Number:
-                dlgNumber = book.Number
+                sAlbumNum = book.Number
             else:
-                dlgNumber = book.ShadowNumber
+                sAlbumNum = book.ShadowNumber
                 Shadow2 = True
 
             if book.Series:
-                dlgName = titlize(book.Series)
+                sSerieName = titlize(book.Series)
             else:
-                dlgName = book.ShadowSeries
+                sSerieName = book.ShadowSeries
                 Shadow1 = True
 
             if book.AlternateNumber:
-                dlgAltNumber = book.AlternateNumber
+                sAlbumAltNum = book.AlternateNumber
             else:
-                dlgAltNumber = ""
+                sAlbumAltNum = ""
 
-            dlgNameClean = cleanARTICLES(dlgName)
-            dlgName = formatARTICLES(dlgName)
+            sSerieNameClean = cleanARTICLES(sSerieName)
+            sSerieName = formatARTICLES(sSerieName)
 
-            findCara = dlgName.find(SUBPATT)
+            findCara = sSerieName.find(SUBPATT)
             if findCara > 0 :
-                lenDlgName = len(dlgName)
+                lenDlgName = len(sSerieName)
                 totalchar = lenDlgName - findCara
-                dlgName = dlgName[:-totalchar]
+                sSerieName = sSerieName[:-totalchar]
 
-            mPos = re.search(r'([.,\\/])', dlgNumber)
-            if not isnumeric(dlgNumber):
-                albumNum = dlgNumber
-                AlbumNumNum = False
-            elif isnumeric(dlgNumber) and not re.search(r'[.,\\/]', dlgNumber):
-                dlgNumber = str(int(dlgNumber))
-                albumNum = str(int(dlgNumber))
-                AlbumNumNum = True
-            elif mPos:
-                nPos = mPos.start(1)
-                albumNum = dlgNumber[:nPos]
-                dlgAltNumber = dlgNumber[nPos:]
-                dlgNumber = albumNum
-                AlbumNumNum = True
+            SplitAlbumNumber(sAlbumNum)
 
-            f.Update("[" + str(i + 1) + "/" + str(len(books)) + "] : " + dlgName + " - " + dlgNumber + if_else(dlgAltNumber == '', '', ' AltNo.[' + dlgAltNumber + ']') + " - " + titlize(book.Title), 1, book)
+            f.Update("[" + str(i + 1) + "/" + str(len(books)) + "] : " + sSerieName + " - " + sAlbumNum + if_else(sAlbumAltNum == '', '', ' AltNo.[' + sAlbumAltNum + ']') + " - " + titlize(book.Title), 1, book)
             f.Refresh()
             Application.DoEvents()
 
             if bStopit:
-                debuglog("Cancelled from WorkerThread after Update")
+                log_Debug.log("Cancelled from WorkerThread after Update")
                 return
 
             RetAlb = False
             if CBRescrape:
                 if book.Web:
-                    RetAlb = QuickScrapeBD2(books, book, book.Web)
+                    RetAlb = QuickScrapeBD2_Impl(books, book, book.Web)
 
             if not CBRescrape:
-                debuglog(Trans(9) + dlgName + "\tNo = [" + albumNum + "]" + if_else(dlgAltNumber == '', '', '\tAltNo. = [' + dlgAltNumber + ']'))
+                log_Debug.log(Trans(9) + sSerieName + "\tNo = [" + sAlbumNum + "]" + if_else(sAlbumAltNum == '', '', '\tAltNo. = [' + sAlbumAltNum + ']'))
                 serieUrl = None
-                debuglog(Trans(10), dlgName)
+                log_Debug.log(Trans(10), sSerieName)
                 
                 RetAlb = False
-                serieUrl = GetFullURL(SetSerieId(book, dlgName, albumNum, nBooks))
+                serieUrl = GetFullURL(SetSerieId(book, sSerieName, sAlbumNum, nBooks))
 
                 if bStopit:
-                    debuglog("Cancelled from WorkerThread after SetSerieId return")
+                    log_Debug.log("Cancelled from WorkerThread after SetSerieId return")
                     return
 
                 if serieUrl:
@@ -433,31 +421,28 @@ def WorkerThread(books):
                         LongSerie= serieUrl.lower().replace(".html", u'__10000.html')
                         serieUrl = LongSerie
                         
-                    if AlbumNumNum:
-                        debuglog(Trans(11), albumNum + "]", if_else(dlgAltNumber == '', '', ' - AltNo.: ' + dlgAltNumber))
-                    else:
-                        debuglog(Trans(12) + albumNum + "]", if_else(dlgAltNumber == '', '', ' - AltNo. [' + dlgAltNumber + ']'))
+                    log_Debug.log(Trans(11) + sAlbumNum + "]", if_else(sAlbumAltNum == '', '', ' - AltNo. [' + sAlbumAltNum + ']'))
 
-                    RetAlb = SetAlbumInformation(book, serieUrl, dlgName, albumNum)
+                    RetAlb = SetAlbumInformation(book, serieUrl, sSerieName, sAlbumNum)
 
-                    #SkipAlbum utlisez lorsque l'on appuye sur Annuler (ou AllowUserChoice == 0) dans la fenetre pour choisir l'album ParseSerieInfo
+                    #SkipAlbum utlisez lorsque l'on appuye sur Annuler dans la fenetre pour choisir l'album ParseSerieInfo (ou SerieChoiceSetting = SerieChoice.NeverAsk)
                     if not SkipAlbum and not RetAlb and not '/revue-' in serieUrl:
                         # reading info on album when no album list is present (i.e. "Croisade (Seconde époque: Nomade)")
-                        RetAlb = parseAlbumInfo (book, serieUrl, albumNum)
+                        RetAlb = parseAlbumInfo (book, serieUrl, sAlbumNum)
             
             if RetAlb:
                 nRenamed += 1
-                log_BD("[" + dlgName + "] " + dlgNumber + if_else(dlgAltNumber == '', '', ' AltNo.[' + dlgAltNumber + ']') + " - " + titlize(book.Title), Trans(13), 1)
+                log_BD.log("[" + sSerieName + "] " + sAlbumNum + if_else(sAlbumAltNum == '', '', ' AltNo.[' + sAlbumAltNum + ']') + " - " + titlize(book.Title), Trans(13), 1)
             else:
                 nIgnored += 1
-                log_BD("[" + dlgName + "] " + dlgNumber + if_else(dlgAltNumber == '', '', ' AltNo. [' + dlgAltNumber + ']') + " - " + titlize(book.Title), Trans(14) + "\n", 1)
+                log_BD.log("[" + sSerieName + "] " + sAlbumNum + if_else(sAlbumAltNum == '', '', ' AltNo. [' + sAlbumAltNum + ']') + " - " + titlize(book.Title), Trans(14) + "\n", 1)
 
             i += 1
 
             TimeBookEnd = clock()
             nSec = int(TimeBookEnd - TimeBookStart)
-            debuglog(Trans(125), str(timedelta(seconds=nSec)) + chr(10))
-            debuglog("^" * 60)
+            log_Debug.log(Trans(125), str(timedelta(seconds=nSec)) + chr(10))
+            log_Debug.log("^" * 60)
 
             # timeout in seconds before next scrape
             if TIMEOUTS and nOrigBooks > nIgnored + nRenamed:
@@ -468,15 +453,15 @@ def WorkerThread(books):
                     t.CurrentThread.Join(50)
                     Application.DoEvents()
                     if bStopit:
-                        debuglog("Cancelled from WorkerThread TIMEOUT Loop")
+                        log_Debug.log("Cancelled from WorkerThread TIMEOUT Loop")
                         return
             if bStopit:
-                debuglog("Cancelled from WorkerThread End")
+                log_Debug.log("Cancelled from WorkerThread End")
                 return
 
     except:
-        cError = debuglogOnError()
-        log_BD("   [" + dlgName + "] " + dlgNumber + " - " + titlize(book.Title), cError, 1)
+        cError = log_Debug.log_Error()
+        log_BD.log("   [" + sSerieName + "] " + sAlbumNum + " - " + titlize(book.Title), cError, 1)
         if f:
             f.Close()
             t.Abort()
@@ -488,31 +473,40 @@ def WorkerThread(books):
         #Application.DoEvents()
         f.Close()
 
-        log_BD("\n" + Trans(17) + str(nRenamed) , "", 0)
-        log_BD(Trans(18) + str(nIgnored), "", 0)
-        log_BD("============= " + str(datetime.now().strftime("%A %d %B %Y %H:%M:%S")) + " =============", "\n\n", 0)
+        log_BD.log("\n" + Trans(17) + str(nRenamed) , "", 0)
+        log_BD.log(Trans(18) + str(nIgnored), "", 0)
+        log_BD.log("============= " + str(datetime.now().strftime("%A %d %B %Y %H:%M:%S")) + " =============", "\n\n", 0)
 
+        # Calculate elapsed time and log it in milliseconds for higher precision
         TimeEnd = clock()
-        nSec = int(TimeEnd - TimeStart)
-        debuglog(Trans(124), str(timedelta(seconds=nSec)) )
-        debuglog("=" * 25 + "- End! -" + "=" * 25 + chr(10))
-        flush_debuglog()
+        elapsed_seconds = TimeEnd - TimeStart
+        elapsed_millis = int(elapsed_seconds * 1000)
+        log_Debug.log(Trans(124), str(elapsed_millis) )
 
-        if bError and SHOWDBGLOG:
-            rdlg = MessageBox.Show(ComicRack.MainWindow, Trans(17) + str(nRenamed) + ", " + Trans(18) + str(nIgnored) + ", (" + Trans(108) + str(nOrigBooks) + ")\n\n" + Trans(19), Trans(20), MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button1)
-            if rdlg == DialogResult.Yes:
-                # open debug log automatically
-                if FileInfo(__file__[:-len('BedethequeScraper2.py')] + "BD2_Debug_Log.txt"):
-                    Start(__file__[:-len('BedethequeScraper2.py')] + "BD2_Debug_Log.txt")
-        elif SHOWRENLOG:
-            rdlg = MessageBox.Show(ComicRack.MainWindow, Trans(17) + str(nRenamed) + ", " + Trans(18) + str(nIgnored) + ", (" + Trans(108) + str(nOrigBooks) + ")\n\n" + Trans(21), Trans(22), MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button1)
-            if rdlg == DialogResult.Yes:
-                # open rename log automatically
-                if FileInfo(__file__[:-len('BedethequeScraper2.py')] + "BD2_Rename_Log.txt"):
-                    Start(__file__[:-len('BedethequeScraper2.py')] + "BD2_Rename_Log.txt")
+        # End process popup
+        if bError:
+            # Error: always show the end process summary popup and propose to open the debug log according to settings
+            if SHOWDBGLOG:
+                rdlg = MessageBox.Show(ComicRack.MainWindow, Trans(17) + str(nRenamed) + ", " + Trans(18) + str(nIgnored) + ", (" + Trans(108) + str(nOrigBooks) + ")\n\n" + Trans(19), Trans(20), MessageBoxButtons.YesNo, MessageBoxIcon.Error, MessageBoxDefaultButton.Button1)
+                if rdlg == DialogResult.Yes:
+                    # open debug log automatically
+                    if FileInfo(log_Debug.log_path).Exists:
+                        Start(log_Debug.log_path)
+            else:    
+                rdlg = MessageBox.Show(ComicRack.MainWindow, Trans(17) + str(nRenamed) + ", " + Trans(18) + str(nIgnored) + ", (" + Trans(108) + str(nOrigBooks) + ")", Trans(20), MessageBoxButtons.OK, MessageBoxIcon.Error, MessageBoxDefaultButton.Button1)
         else:
-
-            rdlg = MessageBox.Show(ComicRack.MainWindow, Trans(17) + str(nRenamed) + ", " + Trans(18) + str(nIgnored) + " (" + Trans(108) + str(nOrigBooks) + ")" , Trans(22), MessageBoxButtons.OK, MessageBoxIcon.Exclamation, MessageBoxDefaultButton.Button1)            
+            # No error
+            # Show the end process summary popup according to settings and, if shown, propose to open the report according to settings
+            canSkipSummary = SkipSummaryReport and nIgnored == 0
+            if not canSkipSummary:
+                if SHOWRENLOG:
+                    rdlg = MessageBox.Show(ComicRack.MainWindow, Trans(17) + str(nRenamed) + ", " + Trans(18) + str(nIgnored) + ", (" + Trans(108) + str(nOrigBooks) + ")\n\n" + Trans(21), Trans(22), MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button1)
+                    if rdlg == DialogResult.Yes:
+                        # open report file automatically
+                        if FileInfo(log_BD.log_path).Exists:
+                            Start(log_BD.log_path)
+                else:
+                    rdlg = MessageBox.Show(ComicRack.MainWindow, Trans(17) + str(nRenamed) + ", " + Trans(18) + str(nIgnored) + " (" + Trans(108) + str(nOrigBooks) + ")" , Trans(22), MessageBoxButtons.OK, MessageBoxIcon.Information if nIgnored == 0 else MessageBoxIcon.Warning, MessageBoxDefaultButton.Button1)
 
         t.Abort()
 
@@ -538,12 +532,11 @@ def SetSerieId(book, serie, num, nBooksIn):
 
         serieUrl = ''
 
-        debuglog("AlwaysChooseSerie: " + str(AlwaysChooseSerie))
-        if not AlwaysChooseSerie:
+        if SerieChoiceSetting != SerieChoice.AlwaysAsk:
             request = _read_url(urlN.encode('utf-8'), False)
 
             if bStopit:
-                debuglog("Cancelled from SetSerieId after letter page return")
+                log_Debug.log("Cancelled from SetSerieId after letter page return")
                 return ''
 
             if request:
@@ -555,38 +548,39 @@ def SetSerieId(book, serie, num, nBooksIn):
                     serieUrl = nameRegex.group(1)
                     if not ".html" in serieUrl:serieUrl += ".html"
 
-                    debuglog(Trans(23) + serieUrl)
+                    log_Debug.log(Trans(23) + serieUrl)
                     return serieUrl
 
         serie_rech = remove_accents(serie.lower())
         if serie_rech == serie_rech_prev and PickSeries != False:
-            serie_rech_prev = serie_rech
+            # Current book's serie is same as previous book serie and a serie choice was done by the user = we use the same choice
             RenameSeries = PickSeries
             return PickSeriesLink
         else:
+            # Save current book's serie name for speeding next book processing
             serie_rech_prev = serie_rech
             PickSeries = False
 
         ListSeries = list()
-        debuglog("Nom de Série pour recherche = " + dlgNameClean)
-        urlN = '/search/tout?RechTexte=' + remove_accents(dlgNameClean.lower().strip()) +'&RechWhere=0'
+        log_Debug.log("Nom de Série pour recherche = " + sSerieNameClean)
+        urlN = '/search/tout?RechTexte=' + remove_accents(sSerieNameClean.lower().strip()) +'&RechWhere=0'
 
-        debuglog(Trans(113), 'www.bedetheque.com' + urlN)
+        log_Debug.log(Trans(113), 'www.bedetheque.com' + urlN)
 
         request = _read_url(urlN.encode('utf-8'), False)
 
         if bStopit:
-            debuglog("Cancelled from SetSerieId after Search return")
+            log_Debug.log("Cancelled from SetSerieId after Search return")
             return ''
 
         if SERIE_LIST_CHECK.search(request) or REVUE_LIST_CHECK.search(request):
             Result = MessageBox.Show(ComicRack.MainWindow, Trans(114) + '[' + titlize(book.Series) + '] !', Trans(2), MessageBoxButtons.OK, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button1)
-            debuglog(Trans(114) + '[' + titlize(book.Series) + '] !')
+            log_Debug.log(Trans(114) + '[' + titlize(book.Series) + '] !')
             return ''
 
         i = 1
         RegCompile = re.compile(SERIE_LIST_PATTERN, re.IGNORECASE | re.DOTALL )
-        for seriepick in RegCompile.finditer(request):                        
+        for seriepick in RegCompile.finditer(request):
             ListSeries.append(["serie-" + seriepick.group(1), checkWebChar(strip_tags(seriepick.group(2))), str(i).zfill(3)])
             i = i + 1
 
@@ -598,32 +592,32 @@ def SetSerieId(book, serie, num, nBooksIn):
 
         ListSeries.sort(key=operator.itemgetter(2))
 
-        if len(ListSeries) == 1 and not AlwaysChooseSerie:
-            debuglog(Trans(24) + checkWebChar(serie) + "]" )
-            debuglog(Trans(111) + (ListSeries[0][1]))
-            log_BD("** [" + serie + "] " + num + if_else(dlgAltNumber == '', '', ' AltNo. ' + dlgAltNumber) + " - " + titlize(book.Title) + " (www.bedetheque.com" + serieUrl + ")", Trans(25), 1)
-            log_BD(Trans(111), "[" + ListSeries[0][1] + "] " + num + if_else(dlgAltNumber == '', '', ' AltNo. ' + dlgAltNumber) + " - " + titlize(book.Title) + " (www.bedetheque.com\\" + ListSeries[0][0] + ")", 1)
+        forceChoiceForAtLeastOneSerieInList = len(ListSeries) == 1 and SerieChoiceSetting == SerieChoice.AlwaysAsk
+        if len(ListSeries) == 1 and not forceChoiceForAtLeastOneSerieInList:
+            log_Debug.log(Trans(24) + checkWebChar(serie) + "]")
+            log_Debug.log(Trans(111) + (ListSeries[0][1]))
+            log_BD.log("** [" + serie + "] " + num + if_else(sAlbumAltNum == '', '', ' AltNo. ' + sAlbumAltNum) + " - " + titlize(book.Title) + " (www.bedetheque.com" + serieUrl + ")", Trans(25), 1)
+            log_BD.log(Trans(111), "[" + ListSeries[0][1] + "] " + num + if_else(sAlbumAltNum == '', '', ' AltNo. ' + sAlbumAltNum) + " - " + titlize(book.Title) + " (www.bedetheque.com\\" + ListSeries[0][0] + ")", 1)
             RenameSeries = ListSeries[0][1]
             return ListSeries[0][0]
 
-        elif len(ListSeries) > 1 or (AlwaysChooseSerie and len(ListSeries) >= 1) :
-            if AllowUserChoice or nBooksIn == 1:
-                lUnique = False
-                for i in range(len(ListSeries)):
-                    if remove_accents(ListSeries[i][1].lower()) == remove_accents(dlgName.lower().strip()):
-                        lUnique = True
-                        nItem = i
-                    if remove_accents(ListSeries[i][1].lower()) == remove_accents(dlgName.lower().strip()) and re.search(r'\(.{4,}?\)', ListSeries[i][1].lower()):
-                        lUnique = False
-                    if AlwaysChooseSerie:
-                        lUnique = False
-                if lUnique:
-                    debuglog(Trans(24) + checkWebChar(serie) + "]" )
-                    debuglog(Trans(111) + (ListSeries[nItem][1]))
-                    log_BD("** [" + serie + "] " + num + if_else(dlgAltNumber == '', '', ' AltNo. ' + dlgAltNumber) + " - " + titlize(book.Title) + " (www.bedetheque.com" + serieUrl + ")", Trans(25), 1)
-                    log_BD(Trans(111), "[" + ListSeries[nItem][1] + "] " + num + if_else(dlgAltNumber == '', '', ' AltNo. ' + dlgAltNumber) + " - " + titlize(book.Title) + " (www.bedetheque.com\\" + ListSeries[nItem][0] + ")", 1)
-                    RenameSeries = ListSeries[nItem][1]
-                    return ListSeries[nItem][0]
+        elif len(ListSeries) > 1 or forceChoiceForAtLeastOneSerieInList:
+            if SerieChoiceSetting == SerieChoice.AlwaysAsk or nBooksIn == 1:
+                if SerieChoiceSetting != SerieChoice.AlwaysAsk:
+                    lUnique = False
+                    for i in range(len(ListSeries)):
+                        if remove_accents(ListSeries[i][1].lower()) == remove_accents(sSerieName.lower().strip()):
+                            lUnique = True
+                            nItem = i
+                            if re.search(r'\(.{4,}?\)', ListSeries[i][1].lower()):
+                                lUnique = False
+                    if lUnique:
+                        log_Debug.log(Trans(24) + checkWebChar(serie) + "]")
+                        log_Debug.log(Trans(111) + (ListSeries[nItem][1]))
+                        log_BD.log("** [" + serie + "] " + num + if_else(sAlbumAltNum == '', '', ' AltNo. ' + sAlbumAltNum) + " - " + titlize(book.Title) + " (www.bedetheque.com" + serieUrl + ")", Trans(25), 1)
+                        log_BD.log(Trans(111), "[" + ListSeries[nItem][1] + "] " + num + if_else(sAlbumAltNum == '', '', ' AltNo. ' + sAlbumAltNum) + " - " + titlize(book.Title) + " (www.bedetheque.com\\" + ListSeries[nItem][0] + ")", 1)
+                        RenameSeries = ListSeries[nItem][1]
+                        return ListSeries[nItem][0]
                 # Pick a series
                 NewLink = ''
                 NewSeries = ''
@@ -632,27 +626,27 @@ def SetSerieId(book, serie, num, nBooksIn):
                 result = pickAseries.ShowDialog()
 
                 if result == DialogResult.Cancel:
-                    debuglog(Trans(24) + checkWebChar(serie) + "]")
-                    log_BD("** [" + serie + "] " + num + if_else(dlgAltNumber == '', '', ' AltNo. ' + dlgAltNumber) + " - " + titlize(book.Title) + " (www.bedetheque.com" + serieUrl + ")", Trans(25), 1)
+                    log_Debug.log(Trans(24) + checkWebChar(serie) + "]")
+                    log_BD.log("** [" + serie + "] " + num + if_else(sAlbumAltNum == '', '', ' AltNo. ' + sAlbumAltNum) + " - " + titlize(book.Title) + " (www.bedetheque.com" + serieUrl + ")", Trans(25), 1)
                     return ''
                 else:
-                    debuglog(Trans(24) + checkWebChar(serie) + "]")
-                    debuglog(Trans(111) + (NewSeries))
-                    log_BD("** [" + serie + "] " + num + if_else(dlgAltNumber == '', '', ' AltNo. ' + dlgAltNumber) + " - " + titlize(book.Title) + " (www.bedetheque.com" + serieUrl + ")", Trans(25), 1)
-                    log_BD(Trans(111), "[" + NewSeries + "] " + num + if_else(dlgAltNumber == '', '', ' AltNo. ' + dlgAltNumber) + " - " + titlize(book.Title) + " (www.bedetheque.com\\" + NewLink + ")", 1)
+                    log_Debug.log(Trans(24) + checkWebChar(serie) + "]")
+                    log_Debug.log(Trans(111) + (NewSeries))
+                    log_BD.log("** [" + serie + "] " + num + if_else(sAlbumAltNum == '', '', ' AltNo. ' + sAlbumAltNum) + " - " + titlize(book.Title) + " (www.bedetheque.com" + serieUrl + ")", Trans(25), 1)
+                    log_BD.log(Trans(111), "[" + NewSeries + "] " + num + if_else(sAlbumAltNum == '', '', ' AltNo. ' + sAlbumAltNum) + " - " + titlize(book.Title) + " (www.bedetheque.com\\" + NewLink + ")", 1)
                     RenameSeries = NewSeries
                     PickSeries = RenameSeries
                     PickSeriesLink = NewLink
                     return NewLink
             else:
-                debuglog(Trans(142) + checkWebChar(serie) + "]")
-                log_BD("** [" + serie + "] " + num + if_else(dlgAltNumber == '', '', ' AltNo. ' + dlgAltNumber) + " - " + titlize(book.Title) + " (www.bedetheque.com" + serieUrl + ")", Trans(25), 1)
+                log_Debug.log(Trans(142) + checkWebChar(serie) + "]")
+                log_BD.log("** [" + serie + "] " + num + if_else(sAlbumAltNum == '', '', ' AltNo. ' + sAlbumAltNum) + " - " + titlize(book.Title) + " (www.bedetheque.com" + serieUrl + ")", Trans(25), 1)
                 return ''
 
     except:
 
-        cError = debuglogOnError()
-        log_BD("** Error [" + serie + "] " + num + " - " + titlize(book.Title), cError, 1)
+        cError = log_Debug.log_Error()
+        log_BD.log("** Error [" + serie + "] " + num + " - " + titlize(book.Title), cError, 1)
 
     return serieUrl
 
@@ -683,11 +677,11 @@ def SetAlbumInformation(book, serieUrl, serie, num):
     albumUrl = parseSerieInfo(book, serieUrl, False)
 
     if bStopit:
-        debuglog("Cancelled from SetAlbumInformation")
+        log_Debug.log("Cancelled from SetAlbumInformation")
         return False
 
     if albumUrl and not '/revue-' in serieUrl:
-        debuglog(Trans(26), albumUrl)
+        log_Debug.log(Trans(26), albumUrl)
         if not parseAlbumInfo(book, albumUrl, num):
             return False
         return True
@@ -696,37 +690,35 @@ def SetAlbumInformation(book, serieUrl, serie, num):
         return albumUrl
 
     else:
-        debuglog(Trans(26), Trans(25))
-        debuglog(Trans(27) + serie + "] " + num + if_else(dlgAltNumber == '', '', ' AltNo.' + dlgAltNumber) + "\n")
-        log_BD("   [" + serie + "] " + num + if_else(dlgAltNumber == '', '', ' AltNo.' + dlgAltNumber) + " - " + titlize(book.Title) + " (www.bedetheque.com" + serieUrl + ")", Trans(28), 1)
+        log_Debug.log(Trans(26), Trans(25))
+        log_Debug.log(Trans(27) + serie + "] " + num + if_else(sAlbumAltNum == '', '', ' AltNo.' + sAlbumAltNum) + "\n")
+        log_BD.log("   [" + serie + "] " + num + if_else(sAlbumAltNum == '', '', ' AltNo.' + sAlbumAltNum) + " - " + titlize(book.Title) + " (www.bedetheque.com" + serieUrl + ")", Trans(28), 1)
         return False
 
 def parseSerieInfo(book, serieUrl, lDirect):
 
     global Serie_Resume, SkipAlbum
 
-    debuglog("=" * 60)
-    debuglog("parseSerieInfo", "a)", serieUrl, "b)", lDirect)
-    debuglog("=" * 60)
+    log_Debug.log("=" * 60)
+    log_Debug.log("parseSerieInfo", "a)", serieUrl, "b)", lDirect)
+    log_Debug.log("=" * 60)
 
-    SERIE_QSERIE = re.compile(SERIE_QSERIE_PATTERN, re.IGNORECASE | re.MULTILINE | re.DOTALL)
-    
     SkipAlbum = False
     albumURL = ''
     
     if bStopit:
-        debuglog("Cancelled from parseSerieInfo Start")
+        log_Debug.log("Cancelled from parseSerieInfo Start")
         return False
 
     try:
         request = _read_url(serieUrl, lDirect)
     except:
-        cError = debuglogOnError()
-        log_BD("   " + serieUrl + " " + Trans(43), "", 1)
+        cError = log_Debug.log_Error()
+        log_BD.log("   " + serieUrl + " " + Trans(43) + " -> ", cError, 1)
         return False
 
     if bStopit:
-        debuglog("Cancelled from parseSerieInfo after _read_url return")
+        log_Debug.log("Cancelled from parseSerieInfo after _read_url return")
         return False
 
     if '/revue-' in serieUrl:
@@ -746,7 +738,7 @@ def parseSerieInfo(book, serieUrl, lDirect):
                 ListAlbum.append([albumPick[0], "Num: " + albumPick[1].strip(), str(i).zfill(5)])
                 i = i + 1
 
-        matchedAlbum = next((x for x in ListAlbum if x[1] == "Num: " + dlgNumber), None) #find num in list
+        matchedAlbum = next((x for x in ListAlbum if x[1] == "Num: " + sAlbumNum), None) #find num in list
         if matchedAlbum is not None and not lDirect:
             albumURL = matchedAlbum[0]
         elif lDirect and '#' in serieUrl:
@@ -763,7 +755,7 @@ def parseSerieInfo(book, serieUrl, lDirect):
         if ID:
             REVUE_HEADER = re.compile(REVUE_HEADER_PATTERN_ALT % ID, re.IGNORECASE | re.MULTILINE | re.DOTALL)   
         else:
-            REVUE_HEADER = re.compile(REVUE_HEADER_PATTERN % dlgNumber, re.IGNORECASE | re.MULTILINE | re.DOTALL) 
+            REVUE_HEADER = re.compile(REVUE_HEADER_PATTERN % sAlbumNum, re.IGNORECASE | re.MULTILINE | re.DOTALL) 
             
         SerieInfoRegex = REVUE_HEADER.search(request)
         if SerieInfoRegex:
@@ -785,9 +777,9 @@ def parseSerieInfo(book, serieUrl, lDirect):
             if lDirect and CBSeries:
                 nameRegex = SERIE_QSERIE.search(Entete)
                 if nameRegex:
-                    qserie = checkWebChar(nameRegex.group(1).strip())
+                    qserie = checkWebChar(nameRegex.group(2).strip())
                     book.Series = titlize(qserie)
-                    debuglog(Trans(9), qserie)
+                    log_Debug.log(Trans(9), qserie)
                 else:
                     albumURL = False
                     return ""
@@ -800,13 +792,16 @@ def parseSerieInfo(book, serieUrl, lDirect):
                 else:
                     genre = ""
                 if genre != "":
+                    # Fix lower case in genre : aaaa, bbbb, ... -> Aaaa, Bbbb
+                    # for example : https://www.bedetheque.com/serie-64027-BD-Martin-Luther-lanceur-d-alerte.html
+                    genre = ", ".join([g.capitalize() for g in genre.split(", ")])
                     book.Genre = genre
                     # Flag Erotique/Érotique genre as PG
                     if 'rotique' in genre.lower():
                         book.AgeRating = "PG"
                 elif genre == "" and '/revue-' in serieUrl:
                     book.Genre = "Revue"
-                debuglog(Trans(51), book.Genre)
+                log_Debug.log(Trans(51), book.Genre)
 
             #Resume
             if CBSynopsys:
@@ -819,7 +814,7 @@ def parseSerieInfo(book, serieUrl, lDirect):
                 resume = re.sub(r'Tout sur la série.*?:\s?', "", resume, re.IGNORECASE)
                 Serie_Resume = (checkWebChar(resume)).strip()
                 cResume = if_else(resume, Trans(52), Trans(53))
-                debuglog(cResume)
+                log_Debug.log(cResume)
 
             #fini
             if CBStatus:
@@ -827,14 +822,16 @@ def parseSerieInfo(book, serieUrl, lDirect):
                 nameRegex = SERIE_STATUS.search(Entete)
                 if nameRegex:
                     fin = checkWebChar(nameRegex.group(1).strip())
-                    log_BD(fin, Trans(25), 1)
+                    log_BD.log(fin, "", 1)
                 else:
                     fin = ""
 
-                if ("finie" in fin) or (dlgNumber.lower() == "one shot"):
+                book.SetCustomValue("bedetheque_parution", fin)
+
+                if ("finie" in fin) or (sAlbumNum.lower() == "one shot"):
                     book.SeriesComplete = YesNo.Yes
                     SerieState = Trans(54)
-                elif ("one shot" in fin.lower()) and (dlgNumber.lower() != "one shot"):
+                elif ("one shot" in fin.lower()) and (sAlbumNum.lower() != "one shot"):
                     book.SeriesComplete = YesNo.Yes
                     if ONESHOTFORMAT and not CBFormat:
                         book.Format = "One Shot"
@@ -846,25 +843,37 @@ def parseSerieInfo(book, serieUrl, lDirect):
                     book.SeriesComplete = YesNo.Unknown
                     SerieState = Trans(56)
 
-                debuglog(Trans(57) + SerieState + if_else(dlgNumber.lower() == "one shot", " (One Shot)", ""))
+                log_Debug.log(Trans(57) + SerieState + if_else(sAlbumNum.lower() == "one shot", " (One Shot)", ""))
+
+            # Find region of origin of a Serie (Asia, Europe,...)
+            nameRegex = SERIE_ORIGIN.search(Entete)
+            if nameRegex:
+                origin = nameRegex.group(1).strip()
+                book.SetCustomValue("bedetheque_origin", origin)
 
             # Language
             if CBLanguage:
                 nameRegex = SERIE_LANGUE.search(Entete)
-                dLang = {"Fr": "fr", "Al": "de", "An": "en", "It":"it", "Es":"es", "Ne":"du", "Po":"pt", "Ja":"ja"}
+                dLang = {"Fr": "fr", "Al": "de", "An": "en", "It":"it", "Es":"es", "Ne":"du", "Po":"pt", "Ja":"ja", "La":"la"}
                 if nameRegex:
                     langue = nameRegex.group(1).strip()
-                    debuglog(Trans(36), langue[:2])
-                    book.LanguageISO = dLang[langue[:2]]
+                    log_Debug.log(Trans(36), langue[:2])
+                    book.LanguageISO = dLang.get(langue[:2], langue[:2].lower())
 
             #Default Values
             if not CBDefault:
                 book.EnableProposed = YesNo.No
-                debuglog(Trans(136), "No")
-
+                log_Debug.log(Trans(136), "No")
+            
             SerieInfoRegex = SERIE_HEADER2.search(request)
             if SerieInfoRegex:
                 Entete2 = SerieInfoRegex.group(1)
+
+                # Albums
+                nameRegex = SERIE_COUNT.search(Entete2)
+                if nameRegex:
+                    count = checkWebChar(nameRegex.group(1))
+                    book.SetCustomValue("bedetheque_serie_total_album_count", str(int(count)))
     
                 #Notes-Rating
                 #if CBRating:
@@ -875,19 +884,19 @@ def parseSerieInfo(book, serieUrl, lDirect):
                 #        note = "0.0"
     
                 #    book.CommunityRating = float(note) / 2
-                #    debuglog(Trans(58) + str(float(note) / 2))
+                #    log_Debug.log(Trans(58) + str(float(note) / 2))
                 
                 # Number of...
                 if CBCount and not lDirect:
-
                     count = 0
                     cCountText = ""
                     if COUNTFINIE and book.SeriesComplete == YesNo.No:
                         book.Count = -1
                         cCountText = "---"
                     elif not COUNTOF:
+                        log_Debug.log('2')
                         nameRegex = SERIE_COUNT.search(Entete2)
-                        if nameRegex and AlbumNumNum:
+                        if nameRegex:
                             count = checkWebChar(nameRegex.group(1))
                             book.Count = int(count)
                             cCountText = str(int(count))
@@ -898,18 +907,22 @@ def parseSerieInfo(book, serieUrl, lDirect):
                         nameRegex = SERIE_COUNT_REAL.search(request)
                         if nameRegex:
                             for numof in SERIE_COUNTOF.finditer(nameRegex.group(1)):
-                                if isnumeric(numof.group(1)) and int(numof.group(1)) > count:
+                                if is_integer(numof.group(1)) and int(numof.group(1)) > count:
                                     count = int(numof.group(1))
-                            if count > 0 and AlbumNumNum:
+                            if count > 0:
                                 book.Count = int(count)
                                 cCountText = str(int(count))
-                            elif not AlbumNumNum:
+                            else:
                                 book.Count = -1
                         else:
-                            book.Count = -1
-                            cCountText = "---"
+                            if book.SeriesComplete == YesNo.Yes:
+                                book.Count = 1
+                                cCountText = '1'
+                            else:
+                                book.Count = -1
+                                cCountText = "---"
 
-                    debuglog(Trans(59) + if_else(dlgNumber.lower() == "one shot", "1", cCountText))
+                    log_Debug.log(Trans(59) + if_else(sAlbumNum.lower() == "one shot", "1", cCountText))
 
             Regex = re.compile(r'<label>([^<]*?)<span\sclass=\"numa\">(.*?)</span.*?<a\shref=\"(.*?)".*?title=.+?\">(.+?)</', re.IGNORECASE | re.DOTALL)
 
@@ -919,7 +932,7 @@ def parseSerieInfo(book, serieUrl, lDirect):
                 n, a, url, title = r.group(1), r.group(2), r.group(3), r.group(4)
                 num = if_else(n,n, if_else(a, a, ""))
                 ListAlbumAll.append([url, num + ". " + title, str(i).zfill(3)])
-                if dlgNumber != "" and (num == dlgNumber) and not lDirect:
+                if sAlbumNum != "" and (num == sAlbumNum) and not lDirect:
                     ListAlbum.append([url, num + ". " + title, str(i).zfill(3)])
                 i = i + 1
 
@@ -928,12 +941,12 @@ def parseSerieInfo(book, serieUrl, lDirect):
 
             albumURL = AlbumChooser(ListAlbum)
             if not albumURL and not SkipAlbum:
-                #Rien trouvé il ce peux qu'il n'est pas de liste sur le coté, surement 1 seul item
+                # Nothing found and not cancelled, maybe not on the side list if only one album
                 Regex = re.compile(r'class="titre"\shref="(.+?)".+?<span class="numa">.*?</span>.+?', re.IGNORECASE | re.DOTALL)
                 r = Regex.search(request)
                 if r:
                     albumURL = r.group(1)
-                    debuglog("---> Numéro n'existe pas dans la liste, choix du 1er item")
+                    log_Debug.log("---> Numéro n'existe pas dans la liste, choix du 1er item")
                 else:
                     return ""
 
@@ -946,42 +959,40 @@ ListAlbum elements:
 """
 def AlbumChooser(ListAlbum):
 
-    global NewLink, SkipAlbum
+    global NewLink, SkipAlbum, NewSeries
 
     albumURL = ""
-    debuglog("Nbr. d'item dans la Liste Album est de: " + str(len(ListAlbum)))
+    log_Debug.log("Nbr. d'item dans la Liste Album est de: " + str(len(ListAlbum)))
     if len(ListAlbum) > 1:
-        if AllowUserChoice:
+        if EditionChoiceSetting != EditionChoice.NeverAsk:
             NewLink = ""
             NewSeries = ""
-            pickAnAlbum = SeriesForm(dlgNumber, ListAlbum, FormType.ALBUM)
+            pickAnAlbum = SeriesForm(sAlbumNum, ListAlbum, FormType.ALBUM)
             result = pickAnAlbum.ShowDialog()
-                
+
             if result == DialogResult.Cancel:
                 if TIMEPOPUP != "0" and TimerExpired:
                     albumURL = ListAlbum[0][0]
-                    debuglog("---> Le temps est expiré, choix du 1er item")
+                    log_Debug.log("---> Le temps est expiré, choix du 1er item")
                 else:
-                    albumURL = False
                     SkipAlbum = True
-                    debuglog("---> Appuyer sur Cancel, ignorons ce livre")
+                    log_Debug.log("---> Appuyer sur Cancel, ignorons ce livre")
             else:
                 albumURL = NewLink
         else:
             albumURL = False
-            SkipAlbum = True
-            debuglog("---> Plus d'un item mais l'option pause scrape est désactivé")
+            SkipAlbum = True            
+            log_Debug.log("---> Plus d'un item mais l'option pour ne jamais demander est activé")
     elif len(ListAlbum) == 1:
         albumURL = ListAlbum[0][0]
-        debuglog("---> Seulement 1 item dans la liste")
+        log_Debug.log("---> Seulement 1 item dans la liste")
 
     return albumURL
-
 def parseRevueInfo(book, SerieInfoRegex, serieUrl, Numero = "", serie = ""):
 
-    debuglog("=" * 60)
-    debuglog("parseRevueInfo", "a)", serieUrl, "b)", Numero)
-    debuglog("=" * 60)
+    log_Debug.log("=" * 60)
+    log_Debug.log("parseRevueInfo", "a)", serieUrl, "b)", Numero)
+    log_Debug.log("=" * 60)
     try:
         
         Entete = SerieInfoRegex.group(1)
@@ -997,7 +1008,7 @@ def parseRevueInfo(book, SerieInfoRegex, serieUrl, Numero = "", serie = ""):
         if Numero:
             try:
                 book.Number = Numero
-                debuglog(Trans(115), book.Number)
+                log_Debug.log(Trans(115), book.Number)
             except:
                 book.Number = ""
 
@@ -1006,7 +1017,7 @@ def parseRevueInfo(book, SerieInfoRegex, serieUrl, Numero = "", serie = ""):
                 if serie.group(1):
                     if CBSeries:
                         book.Series = titlize(serie.group(1))
-                        debuglog(Trans(9), titlize(book.Series))
+                        log_Debug.log(Trans(9), titlize(book.Series))
             except:
                 pass
 
@@ -1015,12 +1026,12 @@ def parseRevueInfo(book, SerieInfoRegex, serieUrl, Numero = "", serie = ""):
             nameRegex = re.search(r'<h3 class="titre".+?</span>(.+?)</h3>', Entete, re.IGNORECASE | re.DOTALL | re.MULTILINE)
             if nameRegex: 
                 book.Title = titlize(nameRegex.group(1).strip())
-            debuglog(Trans(29), book.Title)
+            log_Debug.log(Trans(29), book.Title)
 
         #genre
         if CBGenre:
             book.Genre = "Revue"
-            debuglog(Trans(51), book.Genre)
+            log_Debug.log(Trans(51), book.Genre)
 
         #Resume
         if CBSynopsys:
@@ -1031,7 +1042,7 @@ def parseRevueInfo(book, SerieInfoRegex, serieUrl, Numero = "", serie = ""):
                 resume = ""
             book.Summary = (checkWebChar(resume)).strip()
             cResume = if_else(resume, Trans(52), Trans(53))
-            debuglog(cResume)
+            log_Debug.log(cResume)
 
         #Notes-Rating
         if CBRating:
@@ -1042,7 +1053,7 @@ def parseRevueInfo(book, SerieInfoRegex, serieUrl, Numero = "", serie = ""):
                 note = "0.0"
 
             book.CommunityRating = float(note)
-            debuglog(Trans(58) + str(float(note)))
+            log_Debug.log(Trans(58) + str(float(note)))
 
         #Couverture
         # Cover Image only for fileless
@@ -1053,7 +1064,7 @@ def parseRevueInfo(book, SerieInfoRegex, serieUrl, Numero = "", serie = ""):
             response_stream = response.GetResponseStream()
             retval = Image.FromStream(response_stream)
             ComicRack.App.SetCustomBookThumbnail(book, retval)
-            debuglog(Trans(105), CoverImg)
+            log_Debug.log(Trans(105), CoverImg)
 
         #Parution
         if CBPrinted:
@@ -1062,7 +1073,7 @@ def parseRevueInfo(book, SerieInfoRegex, serieUrl, Numero = "", serie = ""):
                 if nameRegex.group(1) != '-':
                     book.Month = int(nameRegex.group(1)[3:5])
                     book.Year = int(nameRegex.group(1)[6:10])
-                    debuglog(Trans(34), str(book.Month) + "/" + str(book.Year))
+                    log_Debug.log(Trans(34), str(book.Month) + "/" + str(book.Year))
                 else:
                     book.Month = -1
                     book.Year = -1
@@ -1079,22 +1090,22 @@ def parseRevueInfo(book, SerieInfoRegex, serieUrl, Numero = "", serie = ""):
             else:
                 book.Publisher = ""
                     
-            debuglog(Trans(35), book.Publisher)
+            log_Debug.log(Trans(35), book.Publisher)
 
         # Planches
         if not book.FilePath:
             nameRegex = REVUE_PLANCHES.search(Entete, 0)
             if nameRegex:
                 pages = nameRegex.group(1).strip()
-                book.PageCount = int(pages) if isnumeric(pages) else -1
-                debuglog(Trans(122), pages)
+                book.PageCount = int(pages) if is_integer(pages) else -1
+                log_Debug.log(Trans(122), pages)
 
         #Periodicité
         if CBFormat:
             nameRegex = REVUE_PERIOD.search(Entete, 0)
             if nameRegex:
                 book.Format = nameRegex.group(1).strip()
-                debuglog(Trans(131), nameRegex.group(1))
+                log_Debug.log(Trans(131), nameRegex.group(1))
 
         #Always set Language to french
         if CBLanguage and not book.LanguageISO:
@@ -1103,7 +1114,7 @@ def parseRevueInfo(book, SerieInfoRegex, serieUrl, Numero = "", serie = ""):
         #web
         if CBWeb == True and not CBRescrape:
             book.Web = serieUrl
-            debuglog(Trans(123), book.Web)
+            log_Debug.log(Trans(123), book.Web)
 
         if CBNotes:
             write_book_notes(book)
@@ -1123,28 +1134,62 @@ class AlbumInfo:
         self.Info = info
         self.URL = url
 
-def parseAlbumInfo(book, pageUrl, num, lDirect = False):
+def preparseAlbumInfo(book, albumUrl):
+    '''
+    From the album URL, return the serie URL, the album number and the album html content (to be re-used for album parsing)
+    '''
+    if bStopit:
+        log_Debug.log("Cancelled from preparseAlbumInfo Start")
+        return False
+
+    albumHTML = _read_url(albumUrl, False)
+
+    if bStopit:
+        log_Debug.log("Cancelled from preparseAlbumInfo after _read_url return")
+        return False
+
+    try:
+        nameRegex = SERIE_QSERIE.search(albumHTML)
+        if nameRegex:
+            url_serie = nameRegex.group(1).strip()
+        else:
+            return False
+
+        tome_group = re.search(r'<h2>\s*(-?\w*?)<span class="numa">(.*?)</span>.', albumHTML, re.IGNORECASE | re.DOTALL)
+        tome = if_else(tome_group.group(1), tome_group.group(1), checkWebChar(tome_group.group(2).strip())) if tome_group else ""
+        
+        return url_serie, tome, albumHTML
+    except:
+        cError = log_Debug.log_Error()
+        log_BD.log("   " + albumUrl + " " + Trans(43) + " -> ", cError, 1)
+    
+    return False
+
+def parseAlbumInfo(book, pageUrl, num, cached_html = None):
 
     global CBelid, NewLink, NewSeries
 
-    debuglog("=" * 60)
-    debuglog("parseAlbumInfo", "a)", pageUrl, "b)", num , "c)", lDirect)
-    debuglog("=" * 60)
+    log_Debug.log("=" * 60)
+    log_Debug.log("parseAlbumInfo", "a)", pageUrl, "b)", num)
+    log_Debug.log("=" * 60)
 
     AlbumBDThequeNum = ""
 
     if bStopit:
-        debuglog("Cancelled from parseAlbumInfo Start")
+        log_Debug.log("Cancelled from parseAlbumInfo Start")
         return False
 
-    albumHTML = _read_url(pageUrl, False)
+    if cached_html:
+        albumHTML = cached_html
+    else:
+        albumHTML = _read_url(pageUrl, False)
     info_album_regex = INFOS_ALBUMS.search(albumHTML)
     info_album = ''
     if info_album_regex:
         info_album = info_album_regex.group()
-
+        
     if bStopit:
-        debuglog("Cancelled from parseAlbumInfo after _read_url return")
+        log_Debug.log("Cancelled from parseAlbumInfo after _read_url return")
         return False
 
     #identify the album n. in BDTHQ
@@ -1162,16 +1207,16 @@ def parseAlbumInfo(book, pageUrl, num, lDirect = False):
 
     else:
         # Album N. est Numerique
-        if dlgNumber or dlgAltNumber:
-            ALBUM_BDTHEQUE_NUM_PATTERN = r'tails\">%s<span\sclass=\"numa">%s</span>.*?<a name=\"(.*?)\"'
-            ALBUM_BDTHEQUE_NUM = re.compile(ALBUM_BDTHEQUE_NUM_PATTERN % (num, dlgAltNumber), re.IGNORECASE | re.MULTILINE | re.DOTALL)
+        if sAlbumNum or sAlbumAltNum:
+            ALBUM_BDTHEQUE_NUM_PATTERN = r'tails">%s<span\sclass="numa">%s</span>.*?<a name="(.*?)"'
+            ALBUM_BDTHEQUE_NUM = re.compile(ALBUM_BDTHEQUE_NUM_PATTERN % (num, sAlbumAltNum), re.IGNORECASE | re.MULTILINE | re.DOTALL)
 
             nameRegex = ALBUM_BDTHEQUE_NUM.search(albumHTML)
 
             if nameRegex:
                 AlbumBDThequeNum = nameRegex.group(1)
             else:
-                ALBUM_BDTHEQUE_NUM_PATTERN = r'>%s<span\sclass=\"numa">.*?</span>.*?<a name=\"(.*?)\"'
+                ALBUM_BDTHEQUE_NUM_PATTERN = r'>%s<span\sclass="numa">.*?</span>.*?<a name="(.*?)"'
                 ALBUM_BDTHEQUE_NUM = re.compile(ALBUM_BDTHEQUE_NUM_PATTERN % num, re.IGNORECASE | re.MULTILINE | re.DOTALL)
                 nameRegex = ALBUM_BDTHEQUE_NUM.search(albumHTML)
                 if nameRegex:
@@ -1194,97 +1239,108 @@ def parseAlbumInfo(book, pageUrl, num, lDirect = False):
 
     try:
         i = 0
+        # Log album HTML content for debugging
+        log_Debug.log("Album HTML content: " + albumHTML)
         ListAlbum = list()
         pickedVar = ""
-        picked = False
         info = albumHTML
         tome = re.search(r'<h2>\s*(-?\w*?)<span class="numa">(.*?)</span>.', albumHTML, re.IGNORECASE | re.DOTALL)
         #if no tome take alt number from top of the page
         t = if_else(tome.group(1), tome.group(1), checkWebChar(tome.group(2).strip())) if tome else ""
         #nameRegex groups (inside editions): group#1 => cover, group#2 => tome, group#3 => alt, group#4 => titre, group#5 => info (artists table), group#6 => url anchor
         nameRegex = re.compile(r'class="couv">.+?href="(.+?)".+?class="titre".*?>([^<>]*?)<span class="numa">(.*?)</span>.+?\r\n\s+(.+?)</.+?>(.+?)<div class="album-admin".*?id="bt-album-(.+?)">', re.IGNORECASE | re.DOTALL | re.MULTILINE)
-        for albumPick in nameRegex.finditer(albumHTML):    
+        for albumPick in nameRegex.finditer(albumHTML):
             couv = re.sub('/cache/thb_couv/', '/media/Couvertures/', albumPick.group(1)) if albumPick.group(1) else "" #get higher resolution image
             title = checkWebChar(albumPick.group(4).strip())
             nfo = albumPick.group(5)
             # a is altNumber
-            a = checkWebChar(albumPick.group(3).strip() if isnumeric(t) else albumPick.group(3).strip().replace(t,'',1).strip())
+            a = checkWebChar(albumPick.group(3).strip() if is_integer(t) else albumPick.group(3).strip().replace(t,'',1).strip())
             url = pageUrl + "#reed" if i == 0 else pageUrl + "#" + albumPick.group(6).strip()
             albumInfo = AlbumInfo(t, a, title, nfo, couv, url)
-            debuglog("Tome)", t, "Alt)", a, "Title)", title)
+            log_Debug.log("Tome)", t, "Alt)", a, "Title)", title)
 
             ListAlbum.append([a, albumInfo, str(i).zfill(3)])
             i = i + 1
 
         if len(ListAlbum) == 1:
             pickedVar = ListAlbum[0][1]
-            debuglog("---> Seulement 1 item dans la liste")
+            log_Debug.log("---> Seulement 1 item dans la liste")
         elif len(ListAlbum) > 1:
+            picked = False
             for f in ListAlbum:
                 #iterate over editions and if AltNumber matches auto choose it.
-                if dlgAltNumber != "" and f[1].A == dlgAltNumber:
+                if sAlbumAltNum != "" and f[1].A == sAlbumAltNum:
                     pickedVar = f[1]
                     picked = True
                     break
 
             #set that the already picked edition from above wasn't chosen when the option to choose is enabled in config, so we will have the chance to pick it later.
-            if PopUpEditionForm:
+            if EditionChoiceSetting == EditionChoice.AlwaysAsk:
                 picked = False
 
             #show the choose editions form when the option is enabled and the edition wasn't already chosen earlier based on the AltNumber from the book.
             #NewLink (first element from the ListAlbum, in this case the var "a") & NewSeries (object AlbumInfo) are global value that are set when ok is clicked on the form
-            if PopUpEditionForm and AllowUserChoice and not picked:
+            if EditionChoiceSetting != EditionChoice.NeverAsk and not picked:
                 NewLink = ""
                 NewSeries = ""
                 pickAvar = SeriesForm(num, ListAlbum, FormType.EDITION)
                 result = pickAvar.ShowDialog()
 
                 if result == DialogResult.Cancel:
-                    pickedVar = ListAlbum[0][1]
-                    if TimerExpired: debuglog("---> Le temps est expiré, choix du 1er item") 
-                    else: debuglog("---> Cancel appuyer, on choisi le premier")
-
+                    info = ""
+                    if TimerExpired: log_Debug.log("---> Le temps est expiré")
+                    else: log_Debug.log("---> Cancel appuyé")
                 else:
                     pickedVar = NewSeries
             elif not picked:
                 pickedVar = ListAlbum[0][1]
-                debuglog("---> Choix du 1er item")
+                log_Debug.log("---> Choix du 1er item")
 
         if pickedVar :
             info = pickedVar.Info
-            debuglog("Choisi #Alt: " + pickedVar.A + " // Titre: " + pickedVar.Title)
+            log_Debug.log("Choisi #Alt: " + pickedVar.A + " // Titre: " + pickedVar.Title)
+        
 
         if info :
             if RenameSeries:
                 if CBSeries:
                     book.Series = titlize(RenameSeries)
-            elif (Shadow1 or book.Series != titlize(dlgName)):
-                if CBSeries:    
-                    book.Series = titlize(dlgName)
-
-            if Shadow2:
-                book.Number = dlgNumber
+            elif (Shadow1 or book.Series != titlize(sSerieName)):
+                if CBSeries:
+                    book.Series = titlize(sSerieName)
 
             #web
             if CBWeb == True and not CBRescrape:
                 if not ShortWebLink:
                     book.Web = pickedVar.URL.replace("#reed", "")
-                    debuglog(Trans(123), book.Web)
+                    log_Debug.log(Trans(123), book.Web)
                 else:
                     cBelid = re.search(r'-(\d+).html', pageUrl)
                     if cBelid:
                         book.Web = 'www.bedetheque.com/BD--' + cBelid.group(1) + '.html'
-                        debuglog(Trans(123), book.Web)
+                        log_Debug.log(Trans(123), book.Web)
 
-            qnum = pickedVar.N#is equal to t always, but keep it in case of needed modification
+            qnum = pickedVar.N # is equal to t always, but keep it in case of needed modification
             anum = pickedVar.A
-            book.Number = anum if not qnum and anum else qnum#set number to Alt if no number and an Alt Exists
-            book.AlternateNumber = dlgAltNumber if not qnum and anum else anum#Don't change if prev was set to anum, else set to Alt
+            book.Number = anum if not qnum and anum else qnum # set number to Alt if no number and an Alt Exists
+            book.AlternateNumber = sAlbumAltNum if not qnum and anum else anum # Don't change if prev was set to anum, else set to Alt
+
+            # Remove number if One shot (keep number if year looking number)
+            if book.GetCustomValue("bedetheque_parution").lower() == 'one shot' and book.Count <= 1:
+                if isPositiveInt(book.Number) and not isYearInt(book.Number):
+                    book.Number = ""
+                if isPositiveInt(book.AlternateNumber) and not isYearInt(book.AlternateNumber):
+                    book.AlternateNumber = ""
+
             if PadNumber != "0":
                 if isPositiveInt(book.Number): book.Number = str(book.Number).zfill(int(PadNumber))
                 if isPositiveInt(book.AlternateNumber): book.AlternateNumber = str(book.AlternateNumber).zfill(int(PadNumber))
-            debuglog("Num: ", book.Number)
-            debuglog("Alt: ", book.AlternateNumber)
+            log_Debug.log("Num: ", book.Number)
+            log_Debug.log("Alt: ", book.AlternateNumber)
+
+            # Reset Count Of if current album has no number
+            if not is_integer(book.Number):
+                book.Count = -1
 
             series = book.Series
             nameRegex = re.search('bandeau-info.+?<h1>.+?>([^"]+?)[<>]', albumHTML, re.IGNORECASE | re.DOTALL | re.MULTILINE)# Les 5 Terres Album et Serie, dans l'entête
@@ -1292,7 +1348,7 @@ def parseAlbumInfo(book, pageUrl, num, lDirect = False):
             if nameRegex:
                 series = checkWebChar(nameRegex.group(1).strip())
                 seriesFormat = checkWebChar(nameRegex2.group(1).strip()) if nameRegex2 else series
-                debuglog(Trans(9) + series + ' // Formaté: ' + seriesFormat)
+                log_Debug.log(Trans(9) + series + ' // Formaté: ' + seriesFormat)
 
             if CBTitle:
                 NewTitle = ""
@@ -1305,7 +1361,7 @@ def parseAlbumInfo(book, pageUrl, num, lDirect = False):
                     NewTitle = ""
 
                 book.Title = NewTitle
-                debuglog(Trans(29), book.Title)
+                log_Debug.log(Trans(29), book.Title)
 
             if TBTags == "DEL":
                 book.Tags = ""
@@ -1340,7 +1396,7 @@ def parseAlbumInfo(book, pageUrl, num, lDirect = False):
                     if nameRegex.group('month') != '-' and nameRegex.group('month') != "":
                         book.Month = int(nameRegex.group('month'))
                         book.Year = int(nameRegex.group('year'))
-                        debuglog(Trans(34), str(book.Month) + "/" + str(book.Year))
+                        log_Debug.log(Trans(34), str(book.Month) + "/" + str(book.Year))
                     else:
                         book.Month = -1
                         book.Year = -1
@@ -1356,7 +1412,7 @@ def parseAlbumInfo(book, pageUrl, num, lDirect = False):
                 else:
                     book.Publisher = ""
 
-                debuglog(Trans(35), book.Publisher)
+                log_Debug.log(Trans(35), book.Publisher)
 
             if CBISBN:
                 nameRegex = ALBUM_ISBN.search(info, 0)
@@ -1369,7 +1425,7 @@ def parseAlbumInfo(book, pageUrl, num, lDirect = False):
                 else:
                     book.ISBN = ""
 
-                debuglog("ISBN: ", book.ISBN)
+                log_Debug.log("ISBN: ", book.ISBN)
 
             # Album evaluation is optional => So, there is a specific research
             if CBRating:
@@ -1377,7 +1433,7 @@ def parseAlbumInfo(book, pageUrl, num, lDirect = False):
                 if nameRegex:
                     evaluation = nameRegex.group(1)
                     book.CommunityRating = float(evaluation)
-                    debuglog(Trans(39) + str(float(evaluation)))
+                    log_Debug.log(Trans(39) + str(float(evaluation)))
 
             # Achevè imp. is optional => So, there is a specific research
             if CBPrinted:
@@ -1385,12 +1441,12 @@ def parseAlbumInfo(book, pageUrl, num, lDirect = False):
                 if nameRegex and book.Month < 1:
                     book.Month = int(nameRegex.group('month'))
                     book.Year = int(nameRegex.group('year'))
-                    debuglog(Trans(40), str(book.Month) + "/" + str(book.Year))
+                    log_Debug.log(Trans(40), str(book.Month) + "/" + str(book.Year))
 
             # Collection is optional => So, there is a specific research
             if CBImprint:
                 nameRegex = ALBUM_COLLECTION.search(info_album, 0) # cherche dans l'encart pour la collection
-                nameRegex2 = ALBUM_COLLECTION.search(info, 0) # cherche dans l'édition seulement
+                nameRegex2 = ALBUM_COLLECTION.search(info, 0) # cherche dans l'édition seulement               
                 if nameRegex or nameRegex2:
                     if nameRegex2:
                         nameRegex = nameRegex2
@@ -1400,7 +1456,7 @@ def parseAlbumInfo(book, pageUrl, num, lDirect = False):
                 else:
                     book.Imprint = ""
 
-                debuglog(Trans(41), book.Imprint)
+                log_Debug.log(Trans(41), book.Imprint)
 
             # Format is optional => So, there is a specific research
             if CBFormat:
@@ -1411,7 +1467,7 @@ def parseAlbumInfo(book, pageUrl, num, lDirect = False):
                 else:
                     book.Format = "" 
 
-                debuglog(Trans(42), book.Format)
+                log_Debug.log(Trans(42), book.Format)
 
             # Album summary is optional => So, there is a specific research
             if CBSynopsys:
@@ -1426,9 +1482,9 @@ def parseAlbumInfo(book, pageUrl, num, lDirect = False):
                     elif resume:
                         summary = if_else(book.Title, '>' + book.Title + '< ' + chr(10), "") + resume
 
-                        debuglog(Trans(100))
+                        log_Debug.log(Trans(100))
                 else:
-                    debuglog(Trans(101))
+                    log_Debug.log(Trans(101))
 
                 # Info edition
                 nameRegex = ALBUM_INFOEDITION.search(info, 0)
@@ -1437,17 +1493,16 @@ def parseAlbumInfo(book, pageUrl, num, lDirect = False):
                         infoedition = strip_tags(nameRegex.group(1)).strip()
                         if infoedition:
                             summary = if_else(summary != "",summary + chr(10) + chr(10) + Trans(118) + infoedition,Trans(118) + infoedition)
-                        debuglog(Trans(118) + Trans(119))
+                        log_Debug.log(Trans(118) + Trans(119))
 
                 #Send Summary to book
-                if summary:
-                    book.Summary = summary
+                book.Summary = summary
 
             # series
             if CBSeries:
                 formatted = titlize(seriesFormat, False) if seriesFormat else titlize(series, True)
                 book.Series = formatted if FORMATARTICLES else titlize(series, False)
-                debuglog(Trans(9), book.Series)
+                log_Debug.log(Trans(9), book.Series)
 
             # Cover Image only for fileless
             if CBCover and not book.FilePath:
@@ -1458,11 +1513,7 @@ def parseAlbumInfo(book, pageUrl, num, lDirect = False):
                     response_stream = response.GetResponseStream()
                     retval = Image.FromStream(response_stream)
                     ComicRack.App.SetCustomBookThumbnail(book, retval)
-                    debuglog(Trans(105), CoverImg    )
-
-            #When QS, no language is set. This is a Temp solution, because there could be other language, but we must go through the series page to check
-            if CBLanguage and lDirect and not book.LanguageISO:
-                book.LanguageISO = "fr"
+                    log_Debug.log(Trans(105), CoverImg)
 
             # Planches
             if not book.FilePath:
@@ -1474,15 +1525,15 @@ def parseAlbumInfo(book, pageUrl, num, lDirect = False):
                     else:
                         book.PageCount =  0
 
-                    debuglog(Trans(122), book.PageCount)
+                    log_Debug.log(Trans(122), book.PageCount)
 
             if CBNotes:
                 write_book_notes(book)
 
     except:
         nameRegex = ""
-        cError = debuglogOnError()
-        log_BD("   " + pageUrl + " " + Trans(43), "", 1)
+        cError = log_Debug.log_Error()
+        log_BD.log("   " + pageUrl + " " + Trans(43) + " -> ", cError, 1)
         return False
 
     return True
@@ -1507,7 +1558,7 @@ def getGenericBookArtists(patterns, book_info, label):
                     if thisArtist not in artist_list:
                         artist_list.append(thisArtist)
             result = ', '.join(artist_list)
-    debuglog(label + ':', result)
+    log_Debug.log(label + ':', result)
     return result
 
 def parseName(extractedName):
@@ -1521,100 +1572,225 @@ def parseName(extractedName):
 
     return checkWebChar(name).strip()
 
-def _run_fetcher(file_name, arguments, timeout_ms):
-    """
-    Starts `file_name arguments`, capturing stdout (the HTML payload) and
-    stderr (diagnostics) on their own plain background threads, so neither
-    pipe can fill up and stall the child process (large HTML pages can
-    easily exceed the OS pipe buffer if nothing is draining it).
+DAEMON_PORT = 56789
+DAEMON_STARTWAIT_SECS = 20
+DAEMON_HOST = "127.0.0.1"
+DAEMON_CONNECT_TIMEOUT_MS = 5000
+DAEMON_RECV_TIMEOUT_MS = 120000
+# PyInstaller single-file build of BedethequeFetcher.py, preferred when present.
+DAEMON_EXE = "BedethequeFetcher.exe"
+# Name of the daemon target currently started by launch_daemon_thread
+# ("", DAEMON_EXE, or "BedethequeFetcher.py").
+daemon_running_name = ""
 
-    This deliberately avoids Process.OutputDataReceived/BeginOutputReadLine.
-    This plugin runs on the host application's STA UI thread, and .NET
-    automatically marshals those events back onto whichever thread created
-    the Process, if that thread owns a message loop - which a WinForms UI
-    thread does. Since this function blocks that same thread while
-    waiting, those marshaled callbacks could never actually run, so the
-    output was never captured: a real deadlock, not a hypothetical one.
-    A plain background Thread doing a blocking Stream read has nothing to
-    do with the STA apartment/message loop, so it can't get stuck on it.
+_daemon_json_serializer = System.Web.Script.Serialization.JavaScriptSerializer()
+_daemon_json_serializer.MaxJsonLength = System.Int32.MaxValue
 
-    Returns (exit_code, stdout_text, stderr_text).
-    """
-    start_info = System.Diagnostics.ProcessStartInfo()
-    start_info.FileName = file_name
-    start_info.Arguments = arguments
-    start_info.UseShellExecute = False
-    start_info.CreateNoWindow = True
-    start_info.RedirectStandardOutput = True
-    start_info.RedirectStandardError = True
-    start_info.StandardOutputEncoding = System.Text.Encoding.UTF8
-    start_info.StandardErrorEncoding = System.Text.Encoding.UTF8
+def _script_dir():
+    """Directory holding this script (and the daemon: BedethequeFetcher.exe
+    and/or BedethequeFetcher.py)."""
+    return __file__[:-len('BedethequeScraper2.py')]
 
-    process = System.Diagnostics.Process.Start(start_info)
-
-    stdout_result = [None]
-    stderr_result = [None]
-    read_exceptions = []
-
-    def read_stdout():
+def is_daemon_running():
+    """True if something (BedethequeFetcher) answers on its TCP port."""
+    try:
+        client = TcpClient()
         try:
-            stdout_result[0] = process.StandardOutput.ReadToEnd()
-        except Exception, e:
-            read_exceptions.append(e)
+            client.Connect("127.0.0.1", DAEMON_PORT)
+        finally:
+            client.Close()
+        return True
+    except:
+        return False
 
-    def read_stderr():
-        try:
-            stderr_result[0] = process.StandardError.ReadToEnd()
-        except Exception, e:
-            read_exceptions.append(e)
+def _daemon_psi(what, args = ""):
+    """ProcessStartInfo to start the daemon (the PyInstaller .exe, or a
+    Python 3 script through ``python -I``). ``what`` is either the daemon's
+    log name for a script ("BedethequeFetcher.py"), in which case the script
+    path is passed as the sole argument and ``python`` is resolved via PATH,
+    or the full path of a .exe to run directly. Common settings keep the
+    process hidden and its output pipes redirected so a background thread
+    can drain them."""
+    psi = ProcessStartInfo()
+    if what.endswith(".py"):
+        psi.FileName = "python"
+        # -I (isolated mode): keep this folder off sys.path, because it contains
+        # IronPython 2 stdlib shims (types.py, string.py, os.py, ...) that would
+        # shadow the real Python 3 stdlib and crash the script on first import.
+        psi.Arguments = "-I " + args
+    else:
+        psi.FileName = what
+        psi.Arguments = args
+    psi.UseShellExecute = False
+    psi.RedirectStandardOutput = True
+    psi.RedirectStandardError = True
+    psi.CreateNoWindow = True
+    return psi
 
-    stdout_thread = System.Threading.Thread(System.Threading.ThreadStart(read_stdout))
-    stdout_thread.IsBackground = True
+def launch_daemon_thread():
+    """Launch BedethequeFetcher (same folder as this script) hidden in the
+    background, with a new .NET thread draining its output pipes so the
+    daemon (started as an external process) never blocks on a full pipe
+    buffer. The PyInstaller build ``BedethequeFetcher.exe`` is preferred; if
+    it is not present, the source script ``BedethequeFetcher.py`` (run with
+    Python 3) is launched instead. Returns the Process, or None if it could
+    not be started."""
+    global daemon_running_name
+    exe = _script_dir() + DAEMON_EXE
+    script = _script_dir() + "BedethequeFetcher.py"
 
-    stderr_thread = System.Threading.Thread(System.Threading.ThreadStart(read_stderr))
-    stderr_thread.IsBackground = True
+    if File.Exists(exe):
+        # Full path: a bare exe name would not resolve to this folder.
+        what, args = exe, ""
+    elif File.Exists(script):
+        what, args = "BedethequeFetcher.py", '"' + script + '"'
+    else:
+        daemon_running_name = ""
+        log_BD.log(DAEMON_EXE + " / BedethequeFetcher.py not found in " + _script_dir(), "", 1)
+        return None
 
     try:
-        # Start draining both pipes *before* waiting on the process, so a
-        # large page can never fill a buffer and stall the child.
-        stdout_thread.Start()
-        stderr_thread.Start()
+        proc = Process()
+        proc.StartInfo = _daemon_psi(what, args)
+        proc.Start()
+    except:
+        cError = log_Debug.log_Error()
+        log_BD.log("Failed to start " + what, cError, 1)
+        return None
 
-        if not process.WaitForExit(timeout_ms):
-            try:
-                process.Kill()
-            except:
-                pass
-
-            raise Exception("Fetcher timed out after " + str(timeout_ms / 1000) + " seconds")
-
-        # The process has already exited, so both ReadToEnd() calls
-        # should return almost immediately (they only block until EOF).
-        # Thread.Join, unlike Thread.Sleep, pumps the STA message queue
-        # while it waits, so it's safe to call from this thread.
-        stdout_thread.Join(10000)
-        stderr_thread.Join(10000)
-
-        if read_exceptions:
-            raise read_exceptions[0]
-
-        return (
-            process.ExitCode,
-            stdout_result[0] or '',
-            stderr_result[0] or '',
-        )
-    finally:
+    def _drain():
+        err = ""
         try:
-            process.Dispose()
+            err = proc.StandardError.ReadToEnd()
+        except:
+            pass
+        try:
+            proc.StandardOutput.ReadToEnd()
+        except:
+            pass
+        try:
+            proc.WaitForExit()
+            if proc.ExitCode and err.strip():
+                log_BD.log(what + " (pid " + str(proc.Id) + ") exited with code " + str(proc.ExitCode) + " -- " + err.strip()[:2000], "", 1)
         except:
             pass
 
+    drain = Thread(ThreadStart(_drain))
+    drain.IsBackground = True
+    drain.Start()
+    # Log the short name (script name or exe file name, not a full path).
+    display = what[len(_script_dir()):] if what.startswith(_script_dir()) else what
+    daemon_running_name = display
+    log_Debug.log(display + " launched (pid " + str(proc.Id) + ", port " + str(DAEMON_PORT) + ")")
+    return proc
+
+def ensure_fetch_daemon():
+    """Make sure BedethequeFetcher is up; launch it in a new thread if not."""
+    if is_daemon_running():
+        return True
+
+    proc = launch_daemon_thread()
+    if proc is None:
+        return False
+
+    # Probe the port from a background thread (Thread.Sleep on the STA
+    # calling thread would not pump messages) and join it to wait.
+    end = datetime.now() + timedelta(seconds=DAEMON_STARTWAIT_SECS)
+
+    def _wait_port():
+        while not is_daemon_running() and datetime.now() < end:
+            Thread.Sleep(250)
+
+    waiter = Thread(ThreadStart(_wait_port))
+    waiter.IsBackground = True
+    waiter.Start()
+    waiter.Join((DAEMON_STARTWAIT_SECS + 5) * 1000)
+    if is_daemon_running():
+        log_Debug.log("BedethequeFetcher ready on port " + str(DAEMON_PORT))
+        return True
+
+    # The port never came up: kill the stuck daemon so the next scrape does
+    # not keep spawning a new one.
+    try:
+        proc.Kill()
+    except:
+        pass
+    name = daemon_running_name if daemon_running_name else "fetch daemon"
+    log_BD.log(name + " (pid " + str(proc.Id) + ") did not answer on 127.0.0.1:" + str(DAEMON_PORT) + " after " + str(DAEMON_STARTWAIT_SECS) + " s; killed", "", 1)
+    return False
+
+def _daemon_request_line(url):
+    """Build the one-line JSON request sent to BedethequeFetcher daemon
+    (``{"url": "..."}\r\n``), serialized through the .NET JavaScriptSerializer."""
+    return System.Text.Encoding.UTF8.GetBytes(_daemon_json_serializer.Serialize({"url": url}) + "\r\n")
+
+def _daemon_json_field(line, key):
+    """Return the string value of ``key`` in the daemon's flat one-line JSON
+    reply, or None when the key is absent (the success reply carries no 'error')."""
+    reply = _daemon_json_serializer.Deserialize(line, System.Collections.Generic.Dictionary[str, System.Object])
+    found, value = reply.TryGetValue(key)
+    return System.Convert.ToString(value) if found else None
+
+def fetch(url):
+    """Fetch a bedetheque page by asking the local BedethequeFetcher daemon over
+    its TCP socket, speaking its line-delimited JSON protocol directly:
+
+        client > daemon:  {"url": "https://..."}\r\n
+        daemon > client:  {"url": "...", "html": "..."}\r\n   or   {"error": "..."}\r\n
+
+    The request is NOT sent to bedetheque.com from this script (a direct
+    request is rejected with a 403): the daemon owns the cookies / user-agent
+    and performs the real fetch.
+    IronPython talks to the daemon through a raw ``TcpClient`` socket.
+    Before talking to the daemon, it is checked and launched in a background
+    thread (same directory as this script) if it is not running.
+    """
+    if not ensure_fetch_daemon():
+        raise RuntimeError("BedethequeFetcher is not running on 127.0.0.1:" + str(DAEMON_PORT) + " and could not be started")
+
+    if isinstance(url, str):
+        url = url.decode("utf-8", "replace")
+    request_line = _daemon_request_line(url)
+
+    client = TcpClient()
+    try:
+        client.Connect(DAEMON_HOST, DAEMON_PORT)
+
+        stream = client.GetStream()
+        stream.WriteTimeout = DAEMON_CONNECT_TIMEOUT_MS
+        stream.ReadTimeout = DAEMON_RECV_TIMEOUT_MS
+
+        # Send the JSON request line (.NET Stream.Write is void: it writes
+        # all requested bytes or raises, no partial-write loop needed).
+        stream.Write(request_line, 0, request_line.Length)
+
+        # Read the daemon's JSON reply line (explicit UTF-8, no BOM sniffing).
+        reader = System.IO.StreamReader(stream, System.Text.Encoding.UTF8)
+        line = reader.ReadLine()
+    finally:
+        try:
+            client.Close()
+        except:
+            pass
+
+    if not line:
+        raise RuntimeError("BedethequeFetcher closed the connection without responding for " + url)
+    line = line.strip()
+
+    error = _daemon_json_field(line, "error")
+    if error is not None:
+        raise RuntimeError("Fetch failed for " + url + ": " + error)
+
+    html = _daemon_json_field(line, "html")
+    if html is None:
+        raise RuntimeError("Malformed BedethequeFetcher response (no 'html' field) for " + url)
+    return html
 
 def _read_url(url, bSingle):
-    page = ''
 
+    page = ''
     if bStopit:
-        debuglog("Cancelled from _read_url Start")
+        log_Debug.log("Cancelled from _read_url Start")
         return page
 
     if not bSingle and re.search("https://www.bedetheque.com/", url, re.IGNORECASE):
@@ -1625,76 +1801,43 @@ def _read_url(url, bSingle):
     else:
         target_url = url_fix("https://www.bedetheque.com/" + url.lstrip("/"))
 
-    debuglog("Final fetcher URL: " + target_url)
-
     try:
-        plugin_dir = System.IO.Path.GetDirectoryName(__file__)
-        fetcher_path = System.IO.Path.Combine(plugin_dir, "BedethequeFetcher.exe")
-
-        if System.IO.File.Exists(fetcher_path):
-            file_name = fetcher_path
-            arguments = '"' + target_url + '"'
-        else:
-            # Dev-only fallback: run the fetcher straight from its .py
-            # source with the system Python interpreter. The real release
-            # ships BedethequeFetcher.exe alongside the plugin and should
-            # never need this path or any extra dependency on the host.
-            fetcher_script = System.IO.Path.GetFullPath(System.IO.Path.Combine(plugin_dir, "BedethequeFetcher.py"))
-
-            if not System.IO.File.Exists(fetcher_script):
-                raise Exception(
-                    "Neither BedethequeFetcher.exe nor BedethequeFetcher.py "
-                    "were found: " + fetcher_path + " / " + fetcher_script
-                )
-
-            debuglog(
-                "BedethequeFetcher.exe not found, falling back to "
-                "python for development: " + fetcher_script
-            )
-
-            file_name = "python"
-            arguments = '"' + fetcher_script + '" "' + target_url + '"'
-            debuglog("Dev-only fallback: running fetcher via python with arguments: " + arguments)
-
-        debuglog("Fetcher URL: " + target_url)
-
-        exit_code, stdout_text, stderr_text = _run_fetcher(
-            file_name,
-            arguments,
-            45000
-        )
-
-        if exit_code != 0:
-            raise Exception("BedethequeFetcher exit code " + str(exit_code) + ": " + stderr_text)
-
-        if not stdout_text:
-            raise Exception("BedethequeFetcher did not return any content")
-
-        page = stdout_text
-
+        page = fetch(target_url)
         Application.DoEvents()
 
         if bStopit:
-            debuglog("Cancelled from _read_url End")
+            log_Debug.log("Cancelled from _read_url Start")
             return ''
 
     except Exception, e:
-        debuglog(Trans(60))
-        debuglog(Trans(61), e)
-        cError = debuglogOnError()
-        log_BD("   [" + dlgName + "] " + dlgNumber + " Alt.No " + dlgAltNumber + " -> " , cError, 1)
+        log_Debug.log(Trans(60))
+        log_Debug.log(Trans(61), e)
+        cError = log_Debug.log_Error()
+        log_BD.log("   [" + sSerieName + "] " + sAlbumNum + " Alt.No " + sAlbumAltNum + " -> " , cError, 1)
         Result = MessageBox.Show(ComicRack.MainWindow, Trans(98) + cError ,Trans(97), MessageBoxButtons.OK, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button1)
 
     return page
 
-def isnumeric(nNum):
+''' 
+Process an album number string and separate Main/Alternate Number and check if main number is an integer
+'''
+def SplitAlbumNumber(s):
+    global sAlbumNum, sAlbumAltNum
+    # Check if the input contains ,./\- character in the middle
+    mPos = re.search(r'[.,\\/-]', s[1:-1])
+    if mPos:
+        # Split the string at the first occurrence of the character
+        nPos = mPos.start() + 1
+        sAlbumAltNum = sAlbumNum[nPos + 1:]  # Right part after the delimiter
+        sAlbumNum = sAlbumNum[:nPos]         # Left part before the delimiter
 
+''' Check if input string is an integer (could be < 0) '''
+def is_integer(s):
     try:
-        n = float(nNum)
+        int(s)
+        return True
     except ValueError:
         return False
-    else:
-        return True
 
 def checkWebChar(strIn):
 
@@ -1734,64 +1877,6 @@ def thread_proc():
     def handle(w, a): 
         pass
 
-def debuglogOnError():
-    global bError
-
-    traceback = sys.exc_info()[2]
-    stackTrace = []
-
-    logfile = (__file__[:-len('BedethequeScraper2.py')] + "BD2_debug_log.txt")
-
-    print("Writing Log to " + logfile)
-    print('Caught ', sys.exc_info()[0].__name__, ': ', sstr(sys.exc_info()[1]))
-
-    with open(logfile, 'a') as log:
-        log.write("\n\n" + str(datetime.now().strftime("%A %d %B %Y %H:%M:%S")) + "\n")
-        cError = sstr(sys.exc_info()[1])
-        log.write("".join(['Caught ', sys.exc_info()[0].__name__, ': ', cError, '\n']).encode('utf-8'))
-
-        while traceback is not None:
-            frame = traceback.tb_frame
-            lineno = traceback.tb_lineno
-            code = frame.f_code
-            filename = code.co_filename
-            name = code.co_name
-            stackTrace.append((filename, lineno, name))
-            traceback = traceback.tb_next
-
-        nL = 0
-        for line in stackTrace:
-            nL += 1
-            print(nL, "-", line)
-            log.write(",".join("%s" % tup for tup in line).encode('utf-8') + "\n")
-
-    bError = True
-
-    return cError
-
-def debuglog(*args):
-    try:
-        message = u' '.join(unicode(arg) for arg in args)
-    
-        if DBGONOFF: print(message)
-        log_messages.append(message)
-    except Exception as e:
-        print(e)
-
-def flush_debuglog():
-    try:
-        logfile = os.path.join(os.path.dirname(__file__), "BD2_debug_log.txt")
-        
-        with open(logfile, 'a') as log:
-            log.write ("\n\n" + str(datetime.now().strftime("%A %d %B %Y %H:%M:%S")) + "\n")
-            for message in log_messages:
-                log.write(message.encode('utf-8') + "\n")
-    
-        del log_messages[:]
-
-    except Exception as e:
-        print(e)
-
 def sstr(object):
 
     ''' safely converts the given object into a  (sstr = safestr) '''
@@ -1812,6 +1897,14 @@ def isPositiveInt(value):
     except:
         return False
 
+def isYearInt(value):
+
+    try:
+        year = int(value)
+        return 1900 < year <= 2100
+    except:
+        return False
+
 def url_fix(s, charset='utf-8'):
 
     if isinstance(s, unicode):
@@ -1822,21 +1915,6 @@ def url_fix(s, charset='utf-8'):
     qs = quote_plus(qs, ':&=')
 
     return urlparse.urlunsplit((scheme, netloc, path, qs, anchor))
-
-def log_BD(bdstr, bdstat, lTime):
-
-    bdlogfile = (__file__[:-len('BedethequeScraper2.py')] + "BD2_Rename_Log.txt")
-
-    bdlog = open(bdlogfile, 'a')
-    if lTime == 1:
-        cDT = str(datetime.now().strftime("%A %d %B %Y %H:%M:%S")) + " > "
-
-    else:
-        cDT = ""
-
-    bdlog.write (cDT.encode('utf-8') + bdstr.encode('utf-8') + "   " + bdstat.encode('utf-8') + "\n")
-
-    bdlog.close()
 
 def if_else(condition, trueVal, falseVal):
 
@@ -1911,7 +1989,7 @@ class ProgressBarDialog(Form):
     def Update(self, cText, nInc = 1, book = False):
 
         Application.DoEvents()
-        self.traitement.Text = "\n" + cText
+        self.traitement.Text = cText
         if nInc == 1: 
             self.pb.Increment(self.pb.Step)
             percent = int((float(self.pb.Value - self.pb.Minimum) / float(self.pb.Maximum - self.pb.Minimum)) * 100)
@@ -1933,14 +2011,14 @@ class ProgressBarDialog(Form):
 
         Application.DoEvents()
         if sender.Name.CompareTo(self.cancel.Name) == 0:
-            debuglog("Cancel button pressed")
+            log_Debug.log("Cancel button pressed")
             bStopit = True
 
 def LoadSetting():
 
-    global SHOWRENLOG, SHOWDBGLOG, DBGONOFF, DBGLOGMAX, RENLOGMAX, LANGENFR, aWord, ARTICLES, SUBPATT, COUNTOF, COUNTFINIE, TITLEIT, TIMEOUT, TIMEOUTS, TIMEPOPUP, FORMATARTICLES, ONESHOTFORMAT
-    global TBTags, CBCover, CBStatus, CBGenre, CBNotes, CBWeb, CBCount, CBSynopsys, CBImprint, CBLetterer, CBInker, CBPrinted, CBRating, CBISBN, CBDefault, CBRescrape, AllowUserChoice, PopUpEditionForm, PadNumber, SerieResumeEverywhere
-    global CBLanguage, CBEditor, CBFormat, CBColorist, CBPenciller, CBWriter, CBTitle, CBSeries, CBCouverture, AlwaysChooseSerie, ShortWebLink, AcceptGenericArtists
+    global SHOWRENLOG, SHOWDBGLOG, DBGONOFF, DBGLOGMAX, RENLOGMAX, LANGENFR, ARTICLES, SUBPATT, COUNTOF, COUNTFINIE, TITLEIT, TIMEOUT, TIMEOUTS, TIMEPOPUP, FORMATARTICLES, ONESHOTFORMAT
+    global TBTags, CBCover, CBStatus, CBGenre, CBNotes, CBWeb, CBCount, CBSynopsys, CBImprint, CBLetterer, CBInker, CBPrinted, CBRating, CBISBN, CBDefault, CBRescrape, CBStop, EditionChoiceSetting, PadNumber, SerieResumeEverywhere
+    global CBLanguage, CBEditor, CBFormat, CBColorist, CBPenciller, CBWriter, CBTitle, CBSeries, CBCouverture, SerieChoiceSetting, ShortWebLink, AcceptGenericArtists, SkipSummaryReport
 
     ###############################################################
     # Config read #
@@ -1957,7 +2035,7 @@ def LoadSetting():
         MySettings = AppSettings()
         MySettings.Load(path + "\App.Config")
     except Exception as e:
-        cError = debuglogOnError()
+        cError = log_Debug.log_Error()
         return False
 
     try:
@@ -2085,9 +2163,9 @@ def LoadSetting():
     except Exception as e:
         CBRescrape = False
     try:
-        AllowUserChoice = ft(MySettings.Get("CBStop"))
+        CBStop = ft(MySettings.Get("CBStop"))
     except Exception as e:
-        AllowUserChoice = "2"
+        CBStop = True
     try:
         ARTICLES = MySettings.Get("ARTICLES")
     except Exception as e:
@@ -2129,9 +2207,9 @@ def LoadSetting():
     except Exception as e:
         FORMATARTICLES = True
     try:
-        PopUpEditionForm = ft(MySettings.Get("PopUpEditionForm"))
+        EditionChoiceSetting = int(MySettings.Get("PopUpEditionForm"))
     except Exception as e:
-        PopUpEditionForm = False
+        EditionChoiceSetting = EditionChoice.AskWhenNeeded
     try:
         SerieResumeEverywhere = ft(MySettings.Get("SerieResumeEverywhere"))
     except Exception as e:
@@ -2145,26 +2223,34 @@ def LoadSetting():
     except Exception as e:
         ONESHOTFORMAT = False
     try:
-        AlwaysChooseSerie = ft(MySettings.Get("AlwaysChooseSerie"))
+        SerieChoiceSetting = int(MySettings.Get("AlwaysChooseSerie"))
     except Exception as e:
-        AlwaysChooseSerie = False
+        SerieChoiceSetting = SerieChoice.AskWhenNeeded
     try:
         AcceptGenericArtists = ft(MySettings.Get("AcceptGenericArtists"))
     except Exception as e:
         AcceptGenericArtists = False
+    try:
+        SkipSummaryReport = ft(MySettings.Get("SkipSummaryReport"))
+    except Exception as e:
+        SkipSummaryReport = False
     ###############################################################
     
     if ONESHOTFORMAT and CBFormat:
         CBFormat = False
 
-    # Compatibility with old version
+    # Compatibility with older plugin version (< 5.20)
     if CBWeb == 2:
         CBWeb = True
         ShortWebLink = True
 
+    if CBStop == 2:
+        CBStop = True
+        SerieChoiceSetting = SerieChoice.AskWhenNeeded
+
     SaveSetting()
 
-    aWord = Translate()
+    LocalizationInit()
 
     return True
     
@@ -2213,20 +2299,15 @@ def SaveSetting():
     MySettings.Set("TIMEOUTS",  TIMEOUTS)
     MySettings.Set("TIMEPOPUP",  TIMEPOPUP)
     MySettings.Set("FORMATARTICLES", tf(FORMATARTICLES))
-    MySettings.Set("PopUpEditionForm", tf(PopUpEditionForm))
+    MySettings.Set("PopUpEditionForm", str(EditionChoiceSetting))
+    MySettings.Set("CBStop", tf(CBStop))
     MySettings.Set("PadNumber", PadNumber)
     MySettings.Set("SerieResumeEverywhere", tf(SerieResumeEverywhere))
-    MySettings.Set("AlwaysChooseSerie", tf(AlwaysChooseSerie))
+    MySettings.Set("AlwaysChooseSerie", str(SerieChoiceSetting))
     MySettings.Set("ONESHOTFORMAT", tf(ONESHOTFORMAT))
     MySettings.Set("AcceptGenericArtists", tf(AcceptGenericArtists))
+    MySettings.Set("SkipSummaryReport", tf(SkipSummaryReport))
     
-    if AllowUserChoice == True:
-        MySettings.Set("CBStop",  "1")
-    elif AllowUserChoice == False:
-        MySettings.Set("CBStop",  "0")
-    elif AllowUserChoice == "2":
-        MySettings.Set("CBStop",  "2")
-
     MySettings.Save((__file__[:-len('BedethequeScraper2.py')] + "App.Config"))
 
 class AppSettings(object):
@@ -2274,14 +2355,14 @@ def ft(n):
     elif n== "0":
         return False
     elif n== "2":
-        return "2"
+        return 2
 
-def tf(bool):
-    if bool == True:
+def tf(n):
+    if n == True:
         return "1"
-    elif bool == False:
+    elif n == False:
         return "0"
-    elif bool == "2":
+    elif n == 2:
         return "2"
 
 class BDConfigForm(Form):
@@ -2359,10 +2440,12 @@ class BDConfigForm(Form):
         self._COUNTFINIE = System.Windows.Forms.CheckBox()
         self._TITLEIT = System.Windows.Forms.CheckBox()
         self._FORMATARTICLES = System.Windows.Forms.CheckBox()
-        self._PopUpEditionForm = System.Windows.Forms.CheckBox()
+        self._radioEditionNoChoice = System.Windows.Forms.RadioButton()
+        self._radioEditionAlwaysChoice = System.Windows.Forms.RadioButton()
+        self._radioEditionSmartChoice = System.Windows.Forms.RadioButton()
         self._SerieResumeEverywhere = System.Windows.Forms.CheckBox()
         self._AcceptGenericArtists = System.Windows.Forms.CheckBox()
-        self._AlwaysChooseSerie = System.Windows.Forms.CheckBox()
+        self._SkipSummaryReport = System.Windows.Forms.CheckBox()
         self._OneShotFormat = System.Windows.Forms.CheckBox()
         self._ShortWebLink = System.Windows.Forms.CheckBox()
         self._TIMEOUT = System.Windows.Forms.TextBox()
@@ -2372,9 +2455,11 @@ class BDConfigForm(Form):
         self._PadNumber = System.Windows.Forms.TextBox()
         self._labelPadNumber = System.Windows.Forms.Label()
         self._CBRescrape = System.Windows.Forms.CheckBox()
-        self._labelChoice = System.Windows.Forms.GroupBox()
-        self._radioChoiceSkip = System.Windows.Forms.RadioButton()
-        self._radioChoiceUser = System.Windows.Forms.RadioButton()
+        self._groupSerieChoice = System.Windows.Forms.GroupBox()
+        self._groupEditionChoice = System.Windows.Forms.GroupBox()
+        self._radioSerieNoChoice = System.Windows.Forms.RadioButton()
+        self._radioSerieAlwaysChoice = System.Windows.Forms.RadioButton()
+        self._radioSerieSmartChoice = System.Windows.Forms.RadioButton()
         self._TabData.SuspendLayout()
         self._tabPage1.SuspendLayout()
         self._tabPage2.SuspendLayout()
@@ -2391,7 +2476,7 @@ class BDConfigForm(Form):
         self._TabData.Location = System.Drawing.Point(0, 0)
         self._TabData.Name = "TabData"
         self._TabData.SelectedIndex = 0
-        self._TabData.Size = System.Drawing.Size(612, 362)
+        self._TabData.Size = System.Drawing.Size(612, 390)
         self._TabData.TabIndex = 22
         #
         # tabPage1
@@ -2404,22 +2489,26 @@ class BDConfigForm(Form):
         self._tabPage1.Controls.Add(self._labelArticles)
         self._tabPage1.Controls.Add(self._TITLEIT)
         self._tabPage1.Controls.Add(self._FORMATARTICLES)
-        self._tabPage1.Controls.Add(self._PopUpEditionForm)
-        self._tabPage1.Controls.Add(self._AlwaysChooseSerie)
         self._tabPage1.Controls.Add(self._TIMEOUT)
         self._tabPage1.Controls.Add(self._TIMEOUTS)
-        self._labelChoice.Controls.Add(self._TIMEPOPUP)
-        self._labelChoice.Controls.Add(self._labelTIMEPOPUP)
+        self._tabPage1.Controls.Add(self._TIMEPOPUP)
+        self._tabPage1.Controls.Add(self._labelTIMEPOPUP)
+        self._groupSerieChoice.Controls.Add(self._radioSerieNoChoice)
+        self._groupSerieChoice.Controls.Add(self._radioSerieAlwaysChoice)
+        self._groupSerieChoice.Controls.Add(self._radioSerieSmartChoice)
+        self._groupEditionChoice.Controls.Add(self._radioEditionNoChoice)
+        self._groupEditionChoice.Controls.Add(self._radioEditionAlwaysChoice)
+        self._groupEditionChoice.Controls.Add(self._radioEditionSmartChoice)
         self._tabPage1.Controls.Add(self._labelTIMEOUT)
         self._tabPage1.Controls.Add(self._labelTIMEOUTS)
         self._tabPage1.Controls.Add(self._CBRescrape)
-        self._tabPage1.Controls.Add(self._labelChoice)
-        self._labelChoice.Controls.Add(self._radioChoiceSkip)
-        self._labelChoice.Controls.Add(self._radioChoiceUser)
+        self._tabPage1.Controls.Add(self._groupSerieChoice)
+        self._tabPage1.Controls.Add(self._groupEditionChoice)
+        self._tabPage1.Controls.Add(self._SkipSummaryReport)
         self._tabPage1.Location = System.Drawing.Point(4, 22)
         self._tabPage1.Name = "tabPage1"
         self._tabPage1.Padding = System.Windows.Forms.Padding(3)
-        self._tabPage1.Size = System.Drawing.Size(600, 350)
+        self._tabPage1.Size = System.Drawing.Size(600, 390)
         self._tabPage1.TabIndex = 0
         self._tabPage1.Text = Trans(95)
         self._tabPage1.UseVisualStyleBackColor = True
@@ -2446,7 +2535,7 @@ class BDConfigForm(Form):
         self._tabPage2.Location = System.Drawing.Point(4, 22)
         self._tabPage2.Name = "tabPage2"
         self._tabPage2.Padding = System.Windows.Forms.Padding(3)
-        self._tabPage2.Size = System.Drawing.Size(600, 350)
+        self._tabPage2.Size = System.Drawing.Size(600, 390)
         self._tabPage2.TabIndex = 1
         self._tabPage2.Text = Trans(96)
         self._tabPage2.UseVisualStyleBackColor = True
@@ -2464,7 +2553,7 @@ class BDConfigForm(Form):
         self._tabPage3.Location = System.Drawing.Point(4, 22)
         self._tabPage3.Name = "tabPage3"
         self._tabPage3.Padding = System.Windows.Forms.Padding(3)
-        self._tabPage3.Size = System.Drawing.Size(600, 350)
+        self._tabPage3.Size = System.Drawing.Size(600, 390)
         self._tabPage3.TabIndex = 1
         self._tabPage3.Text = Trans(47)
         self._tabPage3.UseVisualStyleBackColor = True
@@ -2529,7 +2618,7 @@ class BDConfigForm(Form):
         self._CancelButton.BackColor = System.Drawing.Color.Red
         self._CancelButton.DialogResult = System.Windows.Forms.DialogResult.Cancel
         self._CancelButton.Font = System.Drawing.Font("Microsoft Sans Serif", 9, System.Drawing.FontStyle.Bold, System.Drawing.GraphicsUnit.Point, 0)
-        self._CancelButton.Location = System.Drawing.Point(520, 370)
+        self._CancelButton.Location = System.Drawing.Point(520, 400)
         self._CancelButton.Name = "CancelButton"
         self._CancelButton.Size = System.Drawing.Size(75, 32)
         self._CancelButton.TabIndex = 30
@@ -2542,7 +2631,7 @@ class BDConfigForm(Form):
         self._OKButton.DialogResult = System.Windows.Forms.DialogResult.OK
         self._OKButton.Font = System.Drawing.Font("Microsoft Sans Serif", 9, System.Drawing.FontStyle.Bold, System.Drawing.GraphicsUnit.Point, 0)
         self._OKButton.ForeColor = System.Drawing.Color.Black
-        self._OKButton.Location = System.Drawing.Point(16, 370)
+        self._OKButton.Location = System.Drawing.Point(16, 400)
         self._OKButton.Name = "OKButton"
         self._OKButton.Size = System.Drawing.Size(75, 32)
         self._OKButton.TabIndex = 29
@@ -2580,7 +2669,7 @@ class BDConfigForm(Form):
         #
         self._labelVersion.Font = System.Drawing.Font("Microsoft Sans Serif", 6.75, System.Drawing.FontStyle.Italic, System.Drawing.GraphicsUnit.Point, 0)
         self._labelVersion.ImageAlign = System.Drawing.ContentAlignment.BottomCenter
-        self._labelVersion.Location = System.Drawing.Point(162, 380)
+        self._labelVersion.Location = System.Drawing.Point(162, 410)
         self._labelVersion.Name = "labelVersion"
         self._labelVersion.Size = System.Drawing.Size(264, 16)
         self._labelVersion.TabIndex = 19
@@ -2648,17 +2737,17 @@ class BDConfigForm(Form):
         #
         self._labelTIMEPOPUP.Font = System.Drawing.Font("Microsoft Sans Serif", 8.25, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, 0)
         self._labelTIMEPOPUP.ImageAlign = System.Drawing.ContentAlignment.MiddleLeft
-        self._labelTIMEPOPUP.Location = System.Drawing.Point(16, 52)
+        self._labelTIMEPOPUP.Location = System.Drawing.Point(8, 250)
         self._labelTIMEPOPUP.Name = "labelTimePopup"
-        self._labelTIMEPOPUP.Size = System.Drawing.Size(310, 23)
+        self._labelTIMEPOPUP.Size = System.Drawing.Size(290, 23)
         self._labelTIMEPOPUP.TabIndex = 102
         self._labelTIMEPOPUP.UseVisualStyleBackColor = True
         self._labelTIMEPOPUP.Text = Trans(44)
-        self._labelTIMEPOPUP.CheckState = if_else(AllowUserChoice == "2", CheckState.Checked, CheckState.Unchecked)
+        self._labelTIMEPOPUP.CheckState = if_else(CBStop, CheckState.Checked, CheckState.Unchecked)
         #
         # time out popup
         #
-        self._TIMEPOPUP.Location = System.Drawing.Point(330, 54)
+        self._TIMEPOPUP.Location = System.Drawing.Point(300, 250)
         self._TIMEPOPUP.Name = "TIMEPOPUP"
         self._TIMEPOPUP.Size = System.Drawing.Size(40, 20)
         self._TIMEPOPUP.TabIndex = 103
@@ -2760,16 +2849,53 @@ class BDConfigForm(Form):
         self._FORMATARTICLES.UseVisualStyleBackColor = True
         self._FORMATARTICLES.CheckState = if_else(FORMATARTICLES, CheckState.Checked, CheckState.Unchecked)
         #
-        # PopUpEditionForm
+        # groupEditionChoice
         #
-        self._PopUpEditionForm.Font = System.Drawing.Font("Microsoft Sans Serif", 8.25, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, 0)
-        self._PopUpEditionForm.Location = System.Drawing.Point(8, 160)
-        self._PopUpEditionForm.Name = "PopUpEditionForm"
-        self._PopUpEditionForm.Size = System.Drawing.Size(320, 20)
-        self._PopUpEditionForm.TabIndex = 26
-        self._PopUpEditionForm.Text = Trans(147)
-        self._PopUpEditionForm.UseVisualStyleBackColor = True
-        self._PopUpEditionForm.CheckState = if_else(PopUpEditionForm, CheckState.Unchecked, CheckState.Checked)
+        self._groupEditionChoice.Font = System.Drawing.Font("Microsoft Sans Serif", 8.25, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, 0)
+        self._groupEditionChoice.Location = System.Drawing.Point(8, 190)
+        self._groupEditionChoice.Name = "groupEditionChoice"
+        self._groupEditionChoice.Size = System.Drawing.Size(590, 50)
+        self._groupEditionChoice.Text = Trans(147)
+        #
+        # radioEditionNoChoice
+        #
+        self._radioEditionNoChoice.Font = System.Drawing.Font("Microsoft Sans Serif", 8.25, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, 0)
+        self._radioEditionNoChoice.Location = System.Drawing.Point(16, 20)
+        self._radioEditionNoChoice.Name = "radioEditionNoChoice"
+        self._radioEditionNoChoice.Size = System.Drawing.Size(200, 24)
+        self._radioEditionNoChoice.Text = Trans(45)
+        self._radioEditionNoChoice.UseVisualStyleBackColor = True
+        #
+        # radioEditionSmartChoice
+        #
+        self._radioEditionSmartChoice.Font = System.Drawing.Font("Microsoft Sans Serif", 8.25, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, 0)
+        self._radioEditionSmartChoice.Location = System.Drawing.Point(220, 20)
+        self._radioEditionSmartChoice.Name = "radioEditionSmartChoice"
+        self._radioEditionSmartChoice.Size = System.Drawing.Size(200, 24)
+        self._radioEditionSmartChoice.Text = Trans(46)
+        self._radioEditionSmartChoice.UseVisualStyleBackColor = True
+        #
+        # radioEditionAlwaysChoice
+        #
+        self._radioEditionAlwaysChoice.Font = System.Drawing.Font("Microsoft Sans Serif", 8.25, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, 0)
+        self._radioEditionAlwaysChoice.Location = System.Drawing.Point(420, 20)
+        self._radioEditionAlwaysChoice.Name = "radioEditionAlwaysChoice"
+        self._radioEditionAlwaysChoice.Size = System.Drawing.Size(200, 24)
+        self._radioEditionAlwaysChoice.Text = Trans(141)
+        self._radioEditionAlwaysChoice.UseVisualStyleBackColor = True
+
+        if EditionChoiceSetting == True:
+            self._radioEditionNoChoice.Checked = False
+            self._radioEditionAlwaysChoice.Checked = True
+            self._radioEditionSmartChoice.Checked = False
+        elif EditionChoiceSetting == 2:
+            self._radioEditionNoChoice.Checked = False
+            self._radioEditionAlwaysChoice.Checked = False
+            self._radioEditionSmartChoice.Checked = True
+        else:
+            self._radioEditionNoChoice.Checked = True
+            self._radioEditionAlwaysChoice.Checked = False
+            self._radioEditionSmartChoice.Checked = False
         #
         # SerieResumeEverywhere
         #
@@ -2782,6 +2908,16 @@ class BDConfigForm(Form):
         self._SerieResumeEverywhere.UseVisualStyleBackColor = True
         self._SerieResumeEverywhere.CheckState = if_else(SerieResumeEverywhere, CheckState.Unchecked, CheckState.Checked)
         #
+        # SkipSummaryReport
+        #
+        self._SkipSummaryReport.Font = System.Drawing.Font("Microsoft Sans Serif", 8.25, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, 0)
+        self._SkipSummaryReport.Location = System.Drawing.Point(8, 338)
+        self._SkipSummaryReport.Name = "SkipSummaryReport"
+        self._SkipSummaryReport.Size = System.Drawing.Size(400, 20)
+        self._SkipSummaryReport.Text = Trans(75)
+        self._SkipSummaryReport.UseVisualStyleBackColor = True
+        self._SkipSummaryReport.CheckState = if_else(SkipSummaryReport, CheckState.Checked, CheckState.Unchecked)
+        #
         # AcceptGenericArtists
         #
         self._AcceptGenericArtists.Font = System.Drawing.Font("Microsoft Sans Serif", 8.25, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, 0)
@@ -2792,50 +2928,55 @@ class BDConfigForm(Form):
         self._AcceptGenericArtists.UseVisualStyleBackColor = True
         self._AcceptGenericArtists.CheckState = if_else(AcceptGenericArtists, CheckState.Checked, CheckState.Unchecked)
         #
-        # labelChoice (Decision in case of multiple choices when scraping)
+        # groupSerieChoice (Decision in case of multiple choices when scraping)
         #
-        self._labelChoice.Font = System.Drawing.Font("Microsoft Sans Serif", 8.25, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, 0)
-        self._labelChoice.Location = System.Drawing.Point(8, 192)
-        self._labelChoice.Name = "labelChoice"
-        self._labelChoice.Size = System.Drawing.Size(590, 82)
-        self._labelChoice.Text = Trans(141)
-        self._labelChoice.Tag = "Label"
+        self._groupSerieChoice.Font = System.Drawing.Font("Microsoft Sans Serif", 8.25, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, 0)
+        self._groupSerieChoice.Location = System.Drawing.Point(8, 130)
+        self._groupSerieChoice.Name = "groupSerieChoice"
+        self._groupSerieChoice.Size = System.Drawing.Size(590, 50)
+        self._groupSerieChoice.Text = Trans(151)
+        self._groupSerieChoice.Tag = "Label"
         #
-        # radioChoiceSkip (no user choice allowed)
+        # radioSerieNoChoice (no user choice allowed)
         #
-        self._radioChoiceSkip.Font = System.Drawing.Font("Microsoft Sans Serif", 8.25, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, 0)
-        self._radioChoiceSkip.Location = System.Drawing.Point(16, 20)
-        self._radioChoiceSkip.Name = "radioChoiceSkip"
-        self._radioChoiceSkip.Size = System.Drawing.Size(200, 24)
-        self._radioChoiceSkip.Text = Trans(45)
-        self._radioChoiceSkip.UseVisualStyleBackColor = True
-        self._radioChoiceSkip.CheckedChanged += self.radioChoiceSkip_CheckedChanged
+        self._radioSerieNoChoice.Font = System.Drawing.Font("Microsoft Sans Serif", 8.25, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, 0)
+        self._radioSerieNoChoice.Location = System.Drawing.Point(16, 20)
+        self._radioSerieNoChoice.Name = "radioSerieNoChoice"
+        self._radioSerieNoChoice.Size = System.Drawing.Size(200, 24)
+        self._radioSerieNoChoice.Text = Trans(45)
+        self._radioSerieNoChoice.UseVisualStyleBackColor = True
+        self._radioSerieNoChoice.CheckedChanged += self.radioSerieNoChoice_CheckedChanged
         #
-        # radioChoiceUser (user choice allowed)
+        # radioSerieSmartChoice (user choice if needed)
         #
-        self._radioChoiceUser.Font = System.Drawing.Font("Microsoft Sans Serif", 8.25, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, 0)
-        self._radioChoiceUser.Location = System.Drawing.Point(220, 20)
-        self._radioChoiceUser.Name = "radioChoiceUser"
-        self._radioChoiceUser.Size = System.Drawing.Size(200, 24)
-        self._radioChoiceUser.Text = Trans(46)
-        self._radioChoiceUser.UseVisualStyleBackColor = True
-        if AllowUserChoice:
-            self._radioChoiceUser.Checked = True
-            self._radioChoiceSkip.Checked = False
+        self._radioSerieSmartChoice.Font = System.Drawing.Font("Microsoft Sans Serif", 8.25, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, 0)
+        self._radioSerieSmartChoice.Location = System.Drawing.Point(220, 20)
+        self._radioSerieSmartChoice.Name = "radioSerieSmartChoice"
+        self._radioSerieSmartChoice.Size = System.Drawing.Size(200, 24)
+        self._radioSerieSmartChoice.Text = Trans(46)
+        self._radioSerieSmartChoice.UseVisualStyleBackColor = True
+        #
+        # radioSerieAlwaysChoice (always user choice)
+        #
+        self._radioSerieAlwaysChoice.Font = System.Drawing.Font("Microsoft Sans Serif", 8.25, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, 0)
+        self._radioSerieAlwaysChoice.Location = System.Drawing.Point(420, 20)
+        self._radioSerieAlwaysChoice.Name = "radioSerieAlwaysChoice"
+        self._radioSerieAlwaysChoice.Size = System.Drawing.Size(200, 24)
+        self._radioSerieAlwaysChoice.Text = Trans(141)
+        self._radioSerieAlwaysChoice.UseVisualStyleBackColor = True
+
+        if SerieChoiceSetting == SerieChoice.AlwaysAsk:
+            self._radioSerieSmartChoice.Checked = False
+            self._radioSerieNoChoice.Checked = False
+            self._radioSerieAlwaysChoice.Checked = True
+        elif SerieChoiceSetting == SerieChoice.AskWhenNeeded:
+            self._radioSerieSmartChoice.Checked = True
+            self._radioSerieNoChoice.Checked = False
+            self._radioSerieAlwaysChoice.Checked = False
         else:
-            self._radioChoiceSkip.Checked = True
-            self._radioChoiceUser.Checked = False
-        #
-        # AlwaysChooseSerie
-        #
-        self._AlwaysChooseSerie.Font = System.Drawing.Font("Microsoft Sans Serif", 8.25, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, 0)
-        self._AlwaysChooseSerie.Location = System.Drawing.Point(8, 128)
-        self._AlwaysChooseSerie.Name = "AlwaysChooseSerie"
-        self._AlwaysChooseSerie.Size = System.Drawing.Size(320, 20)
-        self._AlwaysChooseSerie.TabIndex = 28
-        self._AlwaysChooseSerie.Text = Trans(151)
-        self._AlwaysChooseSerie.UseVisualStyleBackColor = True
-        self._AlwaysChooseSerie.CheckState = if_else(AlwaysChooseSerie, CheckState.Checked, CheckState.Unchecked)
+            self._radioSerieSmartChoice.Checked = False
+            self._radioSerieNoChoice.Checked = True
+            self._radioSerieAlwaysChoice.Checked = False
         #
         # One Shot in Format
         #
@@ -2973,7 +3114,7 @@ class BDConfigForm(Form):
         #
         # ConfigForm
         #
-        self.ClientSize = System.Drawing.Size(612, 412)
+        self.ClientSize = System.Drawing.Size(612, 442)
         self.Controls.Add(self._TabData)
         self.Controls.Add(self._labelVersion)
         self.Controls.Add(self._CancelButton)
@@ -2992,16 +3133,16 @@ class BDConfigForm(Form):
 
         # Adjust DPI scaling in this form
         HighDpiHelper.AdjustControlImagesDpiScale(self)
-        ThemeMe(self);
+        ThemeMe(self)
 
         self.ResumeLayout(False)
 
 
     def button_Click(self, sender, e):
 
-        global SHOWRENLOG, SHOWDBGLOG, DBGONOFF, DBGLOGMAX, RENLOGMAX, LANGENFR, aWord, ONESHOTFORMAT
-        global TBTags, CBCover, CBStatus, CBGenre, CBNotes, CBWeb, CBCount, CBSynopsys, CBImprint, CBLetterer, CBInker, CBPrinted, CBRating, CBISBN, CBDefault, CBRescrape, AllowUserChoice, PopUpEditionForm, SerieResumeEverywhere, AcceptGenericArtists
-        global CBLanguage, CBEditor, CBFormat, CBColorist, CBPenciller, CBWriter, CBTitle, CBSeries, ARTICLES, SUBPATT, COUNTOF, CBCouverture, COUNTFINIE, TITLEIT, TIMEOUT, TIMEOUTS, TIMEPOPUP, FORMATARTICLES, PadNumber, AlwaysChooseSerie, ShortWebLink
+        global SHOWRENLOG, SHOWDBGLOG, DBGONOFF, DBGLOGMAX, RENLOGMAX, LANGENFR, ONESHOTFORMAT
+        global TBTags, CBCover, CBStatus, CBGenre, CBNotes, CBWeb, CBCount, CBSynopsys, CBImprint, CBLetterer, CBInker, CBPrinted, CBRating, CBISBN, CBDefault, CBRescrape, CBStop, EditionChoiceSetting, SerieResumeEverywhere, AcceptGenericArtists, SkipSummaryReport
+        global CBLanguage, CBEditor, CBFormat, CBColorist, CBPenciller, CBWriter, CBTitle, CBSeries, ARTICLES, SUBPATT, COUNTOF, CBCouverture, COUNTFINIE, TITLEIT, TIMEOUT, TIMEOUTS, TIMEPOPUP, FORMATARTICLES, PadNumber, SerieChoiceSetting, ShortWebLink
 
         if sender.Name.CompareTo(self._OKButton.Name) == 0:
             SHOWRENLOG = if_else(self._SHOWRENLOG.CheckState == CheckState.Checked, True, False)
@@ -3036,14 +3177,21 @@ class BDConfigForm(Form):
             CBSeries = if_else(self._scrapedData['Series']['state'] == CheckState.Checked, True, False)
             CBDefault = if_else(self._CBDefault.CheckState == CheckState.Checked, True, False)
             CBRescrape = if_else(self._CBRescrape.CheckState == CheckState.Checked, True, False)
-            AllowUserChoice = if_else(self._radioChoiceUser.Checked, True, False)
-            if self._radioChoiceUser.Checked:
-                if self._labelTIMEPOPUP.CheckState == CheckState.Checked:
-                    AllowUserChoice = "2"
-                else:
-                    AllowUserChoice = True
+            CBStop = if_else(self._labelTIMEPOPUP.CheckState == CheckState.Checked, True, False)
+
+            if self._radioEditionAlwaysChoice.Checked:
+                EditionChoiceSetting = EditionChoice.AlwaysAsk
+            elif self._radioEditionNoChoice.Checked:
+                EditionChoiceSetting = EditionChoice.NeverAsk
             else:
-                AllowUserChoice = False
+                EditionChoiceSetting = EditionChoice.AskWhenNeeded
+
+            if self._radioSerieAlwaysChoice.Checked:
+                SerieChoiceSetting = SerieChoice.AlwaysAsk
+            elif self._radioSerieNoChoice.Checked:
+                SerieChoiceSetting = SerieChoice.NeverAsk
+            else:
+                SerieChoiceSetting = SerieChoice.AskWhenNeeded
 
             ARTICLES = self._ARTICLES.Text
             SUBPATT = self._SUBPATT.Text
@@ -3052,10 +3200,9 @@ class BDConfigForm(Form):
             TITLEIT = if_else(self._TITLEIT.CheckState == CheckState.Checked, True, False)
             FORMATARTICLES = if_else(self._FORMATARTICLES.CheckState == CheckState.Checked, True, False)
             ONESHOTFORMAT = if_else(self._OneShotFormat.CheckState == CheckState.Checked, True, False)
-            PopUpEditionForm = if_else(self._PopUpEditionForm.CheckState == CheckState.Checked, False, True)
             SerieResumeEverywhere = if_else(self._SerieResumeEverywhere.CheckState == CheckState.Checked, False, True)
-            AlwaysChooseSerie = if_else(self._AlwaysChooseSerie.CheckState == CheckState.Checked, True, False)
             AcceptGenericArtists = if_else(self._AcceptGenericArtists.CheckState == CheckState.Checked, True, False)
+            SkipSummaryReport = if_else(self._SkipSummaryReport.CheckState == CheckState.Checked, True, False)
 
             try:
                 if int(self._TIMEOUT.Text) > 0:
@@ -3089,8 +3236,8 @@ class BDConfigForm(Form):
             except:
                 PadNumber = "0"
 
-            aWord = Translate()
-            log_BD(TIMEOUTS,"",1)
+            LocalizationInit()
+            log_BD.log(TIMEOUTS,"",1)
 
         elif sender.Name.CompareTo(self._ButtonCheckNone.Name) == 0:
             for index in range(self._ScrapedDataCheckedListBox.Items.Count):
@@ -3102,7 +3249,7 @@ class BDConfigForm(Form):
     def ScrapedDataCheckedListBox_CheckItem(self, sender, e):
         self._scrapedData[self._scrapedData.keys()[e.Index]]['state'] = e.NewValue
 
-    def radioChoiceSkip_CheckedChanged(self, sender, e):
+    def radioSerieNoChoice_CheckedChanged(self, sender, e):
         if sender.Checked == True:
             self._TIMEPOPUP.Enabled = False
             self._labelTIMEPOPUP.Enabled = False
@@ -3112,21 +3259,21 @@ class BDConfigForm(Form):
 
 
 
-def Translate():
+def LocalizationInit():
 
     global aWord
 
     path = (__file__[:-len('BedethequeScraper2.py')])
     
     if not File.Exists(path + "\BDTranslations.Config"):
-        log_BD("File BDTranslations.Config missing !", "Error!", 1)
+        log_BD.log("File BDTranslations.Config missing !", "Error!", 1)
         sys.exit(0)
 
     try:
         TransSettings = AppSettings()
         TransSettings.Load(path + "\BDTranslations.Config")
     except Exception as e:
-        log_BD("Error loading file BDTranslations.Config !", e.message, 1)
+        log_BD.log("Error loading file BDTranslations.Config !", e.message, 1)
         sys.exit(0)
 
     aWord = list()
@@ -3136,8 +3283,6 @@ def Translate():
             aWord.append(TransSettings.Get('T' + '%04d' % i + '/' + LANGENFR))
         except:
             exit
-
-    return aWord
 
 def Trans(nWord):
 
@@ -3194,7 +3339,7 @@ def Capitalize(s):
 
 def ThemeMe(control):
     if ComicRack.App.ProductVersion >= '0.9.182':
-            ComicRack.Theme.ApplyTheme(control)
+        ComicRack.Theme.ApplyTheme(control)
 
 
 class FormType():
@@ -3217,12 +3362,13 @@ class SeriesForm(Form):
         global TimerExpired
 
         self.Load += self.MainForm_Load
+        self.FormClosing += self.MainForm_FormClosing
         self._ListSeries = System.Windows.Forms.ListBox()
         self._CancelButton = System.Windows.Forms.Button()
         self._OKButton = System.Windows.Forms.Button()
         self._ClearButton = System.Windows.Forms.Button()
 
-        if AllowUserChoice == "2":
+        if CBStop:
             TimerExpired = False
             self._timer1 = System.Windows.Forms.Timer()
             self._timer1.Interval = int(TIMEPOPUP) * 1000
@@ -3327,7 +3473,7 @@ class SeriesForm(Form):
         # Adjust DPI scaling in this form
         HighDpiHelper.AdjustControlImagesDpiScale(self)
 
-        if AllowUserChoice == "2":
+        if CBStop:
             self._timer1.Start()
 
     def fillList(self, ):
@@ -3359,21 +3505,24 @@ class SeriesForm(Form):
         if sender.Name.CompareTo(self._OKButton.Name) == 0 and self.List[sel][1]:
             NewLink = self.List[sel][0]
             NewSeries = self.List[sel][1]
-            self.Hide()
 
     def ClearButton_Click(self, sender, e):
         self._Filter.Text = ""
         self.fillList()
         self._Filter.Focus()
 
+    def MainForm_FormClosing(self, sender, e):
+        if CBStop:
+            self._timer1.Stop()
+
     def CloseForm(self, sender, e):
 
         global TimerExpired
 
-        debuglog("Timer Expired")
+        log_Debug.log("Timer Expired")
         TimerExpired = True
         self._timer1.Stop()
-        self.Hide()
+        self.Close()
 
     def DoubleClick(self, sender, e):
 
@@ -3400,52 +3549,54 @@ class SeriesForm(Form):
     def MainForm_Load(self, sender, e):
         self.Left += 365
 
+def ConfigureFunc():
+    with ReportFileManager() as log_BD, DebugFileManager() as log_Debug:
+        if not LoadSetting():
+            return
+        
+        log_BD.checksize(RENLOGMAX)
+        log_Debug.checksize(DBGLOGMAX)
+
+        config = BDConfigForm()
+        result = config.ShowDialog()
+
+        if result == DialogResult.Cancel:
+            return
+        else:
+            SaveSetting()
+
 #@Key Bedetheque2
 #@Hook ConfigScript
 #@Name Configurer BD2
 def ConfigureBD2Quick():
-
-    if not LoadSetting():
-        return
-
-    config = BDConfigForm()
-    result = config.ShowDialog()
-
-    if result == DialogResult.Cancel:
-        return
-    else:
-        SaveSetting()
+    ConfigureFunc()
 
 #@Name Configurer BD2
 #@Image BD2.png
 #@Hook Library
 #@Key ConfigureBD2
 def ConfigureBD2(self):
-
-    if not LoadSetting():
-        return
-
-    config = BDConfigForm()
-    result = config.ShowDialog()
-
-    if result == DialogResult.Cancel:
-        return
-    else:
-        SaveSetting()
+    ConfigureFunc()
 
 #@Name QuickScrape BD2
 #@Image BD2Q.png
 #@Hook Books
 #@Key QuickScrapeBD2
-def QuickScrapeBD2(books, book = "", cLink = False):
+def QuickScrapeBD2(books):
+    with ReportFileManager() as log_BD, DebugFileManager() as log_Debug:
+        if not LoadSetting():
+            return
+        
+        log_BD.checksize(RENLOGMAX)
+        log_Debug.checksize(DBGLOGMAX)
 
-    global LinkBD2, Numero, AlbumNumNum, dlgNumber, dlgName, nRenamed, nIgnored, dlgAltNumber, Shadow1, Shadow2, RenameSeries
+        QuickScrapeBD2_Impl(books)
+    
+def QuickScrapeBD2_Impl(books, book = "", bookURLToRescrape = False):
+
+    global LinkBD2, Numero, sAlbumNum, sSerieName, nRenamed, nIgnored, sAlbumAltNum, Shadow1, Shadow2, RenameSeries
 
     RetAlb = False
-
-    if not cLink:
-        if not LoadSetting():
-            return False
 
     RenameSeries = False
 
@@ -3455,7 +3606,7 @@ def QuickScrapeBD2(books, book = "", cLink = False):
 
     LinkBD2 = ""
 
-    if not cLink:
+    if not bookURLToRescrape:
         nRenamed = 0
         nIgnored = 0
     cError = False
@@ -3464,7 +3615,7 @@ def QuickScrapeBD2(books, book = "", cLink = False):
     try:
 
         if books:
-            if cLink:
+            if bookURLToRescrape:
                 MyBooks.append(book)
             else:
                 MyBooks = books
@@ -3472,53 +3623,38 @@ def QuickScrapeBD2(books, book = "", cLink = False):
                 if books.Count > 1:
                     f.Show(ComicRack.MainWindow)
 
-            log_BD(Trans(7) + str(MyBooks.Count) +  Trans(8), "\n============ " + str(datetime.now().strftime("%A %d %B %Y %H:%M:%S")) + " ===========", 0)
+            log_BD.log(Trans(7) + str(MyBooks.Count) +  Trans(8), "\n============ " + str(datetime.now().strftime("%A %d %B %Y %H:%M:%S")) + " ===========", 0)
 
             for MyBook in MyBooks:
 
-                if cLink:
+                if bookURLToRescrape:
                     Numero = ""
-                    serieUrl = cLink
-                    LinkBD2 = serieUrl
+                    URLToScrape = bookURLToRescrape
+                    LinkBD2 = URLToScrape
 
                 else:
 
                     if MyBook.Number:
-                        dlgNumber = MyBook.Number
+                        sAlbumNum = MyBook.Number
                         Shadow2 = False
                     else:
-                        dlgNumber = MyBook.ShadowNumber
+                        sAlbumNum = MyBook.ShadowNumber
                         Shadow2 = True
 
                     if MyBook.Series:
-                        dlgName = titlize(MyBook.Series)
+                        sSerieName = titlize(MyBook.Series)
                         Shadow1 = False
                     else:
-                        dlgName = MyBook.ShadowSeries
+                        sSerieName = MyBook.ShadowSeries
                         Shadow1 = True
 
-                    dlgAltNumber = ""
+                    sAlbumAltNum = ""
                     if MyBook.AlternateNumber:
-                        dlgAltNumber = MyBook.AlternateNumber
+                        sAlbumAltNum = MyBook.AlternateNumber
 
-                    albumNum = dlgNumber
-                    mPos = re.search(r'([.,\\/-])', dlgNumber)
+                    SplitAlbumNumber(sAlbumNum)
 
-                    if not isnumeric(dlgNumber):
-                        albumNum = dlgNumber
-                        AlbumNumNum = False
-                    elif isnumeric(dlgNumber) and not re.search(r'[.,\\/-]', dlgNumber):
-                        dlgNumber = str(int(dlgNumber))
-                        albumNum = str(int(dlgNumber))
-                        AlbumNumNum = True
-                    elif mPos:
-                        nPos = mPos.start(1)
-                        albumNum = dlgNumber[:nPos]
-                        dlgAltNumber = dlgNumber[nPos:]
-                        dlgNumber = albumNum
-                        AlbumNumNum = True
-
-                    f.Update(dlgName + if_else(dlgNumber != "", " - " + dlgNumber, " ") + if_else(dlgAltNumber == '', '', ' AltNo.[' + dlgAltNumber + ']') + " - " + titlize(MyBook.Title), 1, MyBook)
+                    f.Update(sSerieName + if_else(sAlbumNum != "", " - " + sAlbumNum, " ") + if_else(sAlbumAltNum == '', '', ' AltNo.[' + sAlbumAltNum + ']') + " - " + titlize(MyBook.Title), 1, MyBook)
                     f.Refresh()
 
                     scrape = DirectScrape()
@@ -3528,70 +3664,88 @@ def QuickScrapeBD2(books, book = "", cLink = False):
                         return False
 
                     if LinkBD2:
-                        serieUrl = GetFullURL(LinkBD2)
+                        URLToScrape = GetFullURL(LinkBD2)
 
                 if LinkBD2:
-                    debuglog(Trans(104), LinkBD2)
+                    log_Debug.log(Trans(104), LinkBD2)
 
-                RetVal = serieUrl
-                if "/serie-" in serieUrl or '/revue-' in serieUrl: 
-                    serieUrl = serieUrl if "__10000.html" in serieUrl or '/revue-' in serieUrl else serieUrl.lower().replace(".html", u'__10000.html')                   
-                    RetVal = parseSerieInfo(MyBook, serieUrl, True)
-
-                if RetVal and not '/revue-' in serieUrl:
-                    if LinkBD2:
-                        RetVal = parseAlbumInfo(MyBook, RetVal, dlgNumber, True)
-
-                if RetVal:
-                    if not cLink:
-                        nRenamed += 1
-                    log_BD("[" + serieUrl + "]", Trans(13), 1)
+                # Get Serie Info 
+                if "/serie-" in URLToScrape or '/revue-' in URLToScrape:
+                    # directly if URL is a serie or revue URL
+                    serieUrl = URLToScrape if "__10000.html" in URLToScrape or '/revue-' in URLToScrape else URLToScrape.lower().replace(".html", u'__10000.html')
+                    albumUrl = parseSerieInfo(MyBook, serieUrl, True)
+                    albumHtml = None
                 else:
-                    if not cLink:
+                    # indirectly from album if URL is an album
+                    albumUrl = URLToScrape
+                    result = preparseAlbumInfo(MyBook, albumUrl)
+                    if result:
+                        serieUrl, sAlbumNum, albumHtml = result
+                        albumUrl_notused = parseSerieInfo(MyBook, serieUrl, False)
+                    else:
+                        albumUrl = False
+
+                if albumUrl and not '/revue-' in URLToScrape:
+                    if LinkBD2:
+                        albumUrl = parseAlbumInfo(MyBook, albumUrl, sAlbumNum, albumHtml)
+
+                if albumUrl:
+                    if not bookURLToRescrape:
+                        nRenamed += 1
+                    log_BD.log("[" + URLToScrape + "]", Trans(13), 1)
+                else:
+                    if not bookURLToRescrape:
                         nIgnored += 1
-                    log_BD("[" + serieUrl + "]", Trans(14) + "\n", 1)
+                    log_BD.log("[" + URLToScrape + "]", Trans(14) + "\n", 1)
 
         else:
-            debuglog(Trans(15) +"\n")
-            log_BD(Trans(15), "", 1)
+            log_Debug.log(Trans(15) +"\n")
+            log_BD.log(Trans(15), "", 1)
             return False
 
     except:
-        cError = debuglogOnError()
-        try:
-            log_BD("   [" + serieUrl + "]", cError, 1)
-        except:
-            log_BD("   [error]", cError, 1)
-        if not cLink:
+        cError = log_Debug.log_Error()
+        log_BD.log("   [" + URLToScrape + "]", cError, 1)
+        if not bookURLToRescrape:
             f.Close()
         return False
 
     finally:
-        if not cLink:
+        if not bookURLToRescrape:
             f.Update(Trans(16), 1, book)
             f.Refresh()
             f.Close()
 
             return False
 
-        log_BD("\n" + Trans(17) + str(nRenamed) , "", 0)
-        log_BD(Trans(18) + str(nIgnored), "", 0)
-        log_BD("============= " + str(datetime.now().strftime("%A %d %B %Y %H:%M:%S")) + " =============", "\n\n", 0)
-        if not cLink and cError and SHOWDBGLOG:
-            rdlg = MessageBox.Show(ComicRack.MainWindow, Trans(17) + str(nRenamed) + "," + Trans(18) + str(nIgnored) + "\n\n" + Trans(19), Trans(20), MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button1)
-            if rdlg == DialogResult.Yes:
-                # open debug log automatically
-                if FileInfo(__file__[:-len('BedethequeScraper2.py')] + "BD2_Debug_Log.txt"):
-                    Start(__file__[:-len('BedethequeScraper2.py')] + "BD2_Debug_Log.txt")
-        elif SHOWRENLOG:
-            if not cLink:
-                rdlg = MessageBox.Show(ComicRack.MainWindow, Trans(17) + str(nRenamed) + "," + Trans(18) + str(nIgnored) + "\n\n" + Trans(21), Trans(22), MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button1)
-                if rdlg == DialogResult.Yes:
-                    # open rename log automatically
-                    if FileInfo(__file__[:-len('BedethequeScraper2.py')] + "BD2_Rename_Log.txt"):
-                        Start(__file__[:-len('BedethequeScraper2.py')] + "BD2_Rename_Log.txt")
-        elif not cLink:
-            rdlg = MessageBox.Show(ComicRack.MainWindow, Trans(17) + str(nRenamed) + "," + Trans(18) + str(nIgnored) , Trans(22), MessageBoxButtons.OK, MessageBoxIcon.Exclamation, MessageBoxDefaultButton.Button1)
+        log_BD.log("\n" + Trans(17) + str(nRenamed) , "", 0)
+        log_BD.log(Trans(18) + str(nIgnored), "", 0)
+        log_BD.log("============= " + str(datetime.now().strftime("%A %d %B %Y %H:%M:%S")) + " =============", "\n\n", 0)
+        
+        # End process summary popup
+        if not bookURLToRescrape:
+            if cError:
+                # Error: always show the end process summary popup and propose to open the debug log according to settings
+                if SHOWDBGLOG:
+                    rdlg = MessageBox.Show(ComicRack.MainWindow, Trans(17) + str(nRenamed) + "," + Trans(18) + str(nIgnored) + "\n\n" + Trans(19), Trans(20), MessageBoxButtons.YesNo, MessageBoxIcon.Error, MessageBoxDefaultButton.Button1)
+                    if rdlg == DialogResult.Yes:
+                        # open debug log automatically
+                        if FileInfo(log_Debug.log_path).Exists:
+                            Start(log_Debug.log_path)
+                else:
+                    rdlg = MessageBox.Show(ComicRack.MainWindow, Trans(17) + str(nRenamed) + "," + Trans(18) + str(nIgnored), Trans(20), MessageBoxButtons.YesNo, MessageBoxIcon.Error, MessageBoxDefaultButton.Button1)
+            else:
+                # No error, show the end process summary popup according to settings and, if shown, propose to open the report according to settings
+                canSkipSummary = SkipSummaryReport and nIgnored == 0
+                if not canSkipSummary:
+                    if SHOWRENLOG:
+                        rdlg = MessageBox.Show(ComicRack.MainWindow, Trans(17) + str(nRenamed) + "," + Trans(18) + str(nIgnored) + "\n\n" + Trans(21), Trans(22), MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button1)
+                        if rdlg == DialogResult.Yes:
+                            # open report file automatically
+                            if FileInfo(log_BD.log_path).Exists:
+                                Start(log_BD.log_path)
+                    else:
+                        rdlg = MessageBox.Show(ComicRack.MainWindow, Trans(17) + str(nRenamed) + "," + Trans(18) + str(nIgnored) , Trans(22), MessageBoxButtons.OK, MessageBoxIcon.Information if nIgnored == 0 else MessageBoxIcon.Exclamation, MessageBoxDefaultButton.Button1)
 
     return True
 
@@ -3681,7 +3835,7 @@ class DirectScrape(Form):
             self.PerformLayout()
 
         except:
-            cError = debuglogOnError()
+            cError = log_Debug.log_Error()
 
     def button_Click(self, sender, e):
 
@@ -3690,7 +3844,7 @@ class DirectScrape(Form):
             global LinkBD2
 
             if not self._LinkBD2.Text:
-                self.Hide()
+                self.Close()
                 LinkBD2 = ""
             else:
                 LinkBD2 = self._LinkBD2.Text
@@ -3747,8 +3901,8 @@ class HighDpiHelper:
                 with control.CreateGraphics() as graphics:
                     return graphics.DpiX / 96.0
             except:
-                cError = debuglogOnError()
-                log_BD("   [error]", cError, 1)
+                cError = log_Debug.log_Error()
+                log_BD.log("   [error]", cError, 1)
                 return 1.0
 
         return calculateDpiScale()
@@ -3774,3 +3928,137 @@ class HighDpiHelper:
     @staticmethod
     def ScaleSize(size, scale):
         return Size(int(size.Width * scale), int(size.Height * scale))
+
+class ReportFileManager:
+    def __enter__(self):
+        global log_BD
+        # Initialize the log_BD object here
+        logfile = (__file__[:-len('BedethequeScraper2.py')] + "BD2_Rename_Log.txt")
+        log_BD = ReportLogger(logfile)
+        return log_BD
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        global log_BD
+        # Clean up the log_BD object here
+        log_BD.close()
+        del log_BD
+        log_BD = None
+
+class ReportLogger:
+    def __init__(self, file_path):
+        self.log_path = file_path
+        self.log_file = open(self.log_path, 'ab')
+
+    def log(self, message1, message2, lTime):
+        
+        if lTime:
+            timestamp = datetime.now().strftime('%A %d %B %Y %H:%M:%S')
+            cDT = timestamp + " > "
+        else:
+            cDT = ""
+
+        if not self.log_file.closed:
+            self.log_file.write('{}{}   {}\n'.format(cDT, message1, message2).encode('utf-8'))
+            self.log_file.flush()  # Ensure the message is written to the file immediately
+
+    def close(self):
+        if not self.log_file.closed:
+            self.log_file.close()
+
+    def checksize(self, max_size):
+        if FileInfo(self.log_path).Exists and FileInfo(self.log_path).Length > max_size:
+            Result = MessageBox.Show(ComicRack.MainWindow, Trans(3).format(FileInfo(self.log_path).Name), Trans(4), MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button1)
+            if Result == DialogResult.Yes:
+                if not self.log_file.closed:
+                    self.log_file.close()
+                File.Delete(self.log_path)
+                self.log_file = open(self.log_path, 'ab')
+            else:
+                Result = MessageBox.Show(ComicRack.MainWindow, Trans(3).format(FileInfo(self.log_path).Name), Trans(4), MessageBoxButtons.OK, MessageBoxIcon.Information)
+
+
+    def __del__(self):
+        self.close()
+
+class DebugFileManager:
+    def __enter__(self):
+        global log_Debug
+        # Initialize the log_Debug object here
+        logfile = (__file__[:-len('BedethequeScraper2.py')] + "BD2_debug_log.txt")
+        log_Debug = DebugLogger(logfile)
+        return log_Debug
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        global log_Debug
+        # Clean up the log_Debug object here
+        log_Debug.close()
+        del log_Debug
+        log_Debug = None
+
+class DebugLogger:
+    def __init__(self, file_path):
+        self.log_path = file_path
+        self.log_file = open(self.log_path, 'ab')
+
+    def log(self, *args):
+        try:
+            message = u' '.join(unicode(arg) for arg in args)
+
+            if DBGONOFF: print(message)
+            if not self.log_file.closed:
+                self.log_file.write(message.encode('utf-8') + b"\n")
+                self.log_file.flush()
+        except Exception as e:
+            print(e)
+        
+    def log_Error(self):
+        global bError
+
+        traceback = sys.exc_info()[2]
+        stackTrace = []
+        timestamp = datetime.now().strftime('%A %d %B %Y %H:%M:%S')
+        cError = sstr(sys.exc_info()[1])
+
+        if not self.log_file.closed:
+            self.log_file.write (("\n\n" + timestamp + "\n").encode('utf-8'))
+            self.log_file.write ("".join(['Caught ', sys.exc_info()[0].__name__, ': ', cError, '\n']).encode('utf-8'))
+
+        while traceback is not None:
+            frame = traceback.tb_frame
+            lineno = traceback.tb_lineno
+            code = frame.f_code
+            filename = code.co_filename
+            name = code.co_name
+            stackTrace.append((filename, lineno, name))
+            traceback = traceback.tb_next
+
+        nL = 0
+        print 'Caught ', sys.exc_info()[0].__name__, ': ', cError
+        for line in stackTrace:
+            nL += 1
+            print nL, "-", line
+            if not self.log_file.closed:
+                self.log_file.write ((",".join("%s" % tup for tup in line) + "\n").encode('utf-8'))
+
+        if not self.log_file.closed:
+            self.log_file.flush()
+
+        bError = True
+
+        return cError
+
+    def close(self):
+        if not self.log_file.closed:
+            self.log_file.close()
+
+    def checksize(self, max_size):
+        if FileInfo(self.log_path).Exists and FileInfo(self.log_path).Length > max_size:
+            Result = MessageBox.Show(ComicRack.MainWindow, Trans(3).format(FileInfo(self.log_path).Name), Trans(6), MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button1)
+            if Result == DialogResult.Yes:
+                if not self.log_file.closed:
+                    self.log_file.close()
+                File.Delete(self.log_path)
+                self.log_file = open(self.log_path, 'ab')
+
+    def __del__(self):
+        self.close()
