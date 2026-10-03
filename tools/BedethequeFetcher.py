@@ -1,16 +1,6 @@
-import argparse
-import http.client
-import http.cookiejar
-import json
-import logging
 import os
 import sys
-import socket
-import threading
-import traceback
-import urllib.error
-import urllib.request
- 
+
 # When run via the dev-only fallback, this script lives in the published
 # plugin folder alongside other files meant for IronPython 2.7 (e.g. a
 # types.py shim defining py2-only names like `long`). Python auto-prepends
@@ -27,6 +17,18 @@ if not getattr(sys, "frozen", False):
     _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
     sys.path = [p for p in sys.path if os.path.abspath(p) != _SCRIPT_DIR]
 
+# print("sys.path:", sys.path, file=sys.stderr)
+
+import argparse
+import http.client
+import http.cookiejar
+import json
+import logging
+import socket
+import threading
+import traceback
+import urllib.error
+import urllib.request
 
 """
 Small daemon that fetches bedetheque.com pages on demand.
@@ -61,7 +63,6 @@ HEADERS = [
 ]
 
 log = logging.getLogger("fetch_daemon")
-
 
 def _load_jar():
     """Read the cookie jar from disk, or create an empty one."""
@@ -192,7 +193,64 @@ def _handle_client(conn, addr):
                 pass
 
 
-def main(host="127.0.0.1", port=56789):
+def main_cloudscraper(target_url):
+    import cloudscraper
+
+    scraper = cloudscraper.create_scraper(
+        browser={
+            "browser": "chrome",
+            "platform": "windows",
+            "desktop": True,
+        }
+    )
+
+    scraper.headers.update({
+        "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.8",
+    })
+
+    if "/search/tout" in target_url.lower():
+        homepage_url = "https://www.bedetheque.com/"
+
+        homepage_response = scraper.get(
+            homepage_url,
+            timeout=30,
+        )
+        homepage_response.raise_for_status()
+
+        response = scraper.get(
+            target_url,
+            headers={
+                "Referer": homepage_url,
+            },
+            timeout=30,
+        )
+    else:
+        response = scraper.get(
+            target_url,
+            timeout=30,
+        )
+
+    # All diagnostics go to stderr. stdout is reserved exclusively for the
+    # page payload, since the caller reads stdout as the HTML content.
+    print("HTTP:", response.status_code, file=sys.stderr)
+    print("Final URL:", response.url, file=sys.stderr)
+
+    response.raise_for_status()
+
+    # Normalize to UTF-8 regardless of the page's original declared charset,
+    # so the caller can always decode stdout as UTF-8 without guessing.
+    html_text = response.text
+    payload = html_text.encode("utf-8")
+
+    # Write raw bytes to the underlying buffer (not the text wrapper) so no
+    # platform-specific newline translation or encoding re-interpretation
+    # happens on the way out.
+    sys.stdout.buffer.write(payload)
+    sys.stdout.buffer.flush()
+
+    return 0
+
+def main_daemon(host="127.0.0.1", port=56789):
     """Run the daemon server.
 
     Returns an integer exit code: ``0`` for a clean shutdown (e.g. Ctrl‑C),
@@ -235,15 +293,77 @@ def main(host="127.0.0.1", port=56789):
     return 1 if error_occurred else 0
 
 
+import ctypes
+import subprocess
+import threading
+
+_PROCESS_SYNCHRONIZE = 0x00100000
+_INFINITE = 0xFFFFFFFF
+
+def _terminate_self_and_children():
+    """Force-kill this process and its entire subtree."""
+    log.info("terminating self (pid %s) and children", os.getpid())
+    try:
+        # /T kills the whole process tree rooted at our PID, so any
+        # subprocesses we spawned (e.g. for cloudscraper) go down too.
+        subprocess.call(
+            ["taskkill", "/PID", str(os.getpid()), "/T", "/F"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+    except Exception:
+        pass
+    # Fallback in case taskkill didn't finish us off for some reason.
+    os._exit(1)
+
+
+def watch_parent(parent_pid):
+    """Kill this process tree the moment parent_pid exits.
+    parent_pid must be passed in explicitly (e.g. via --parent_pid),
+    not derived from os.getppid() -- when frozen with PyInstaller
+    onefile, getppid() returns the bootloader's PID, not the PID of
+    the process that actually launched us."""
+    kernel32 = ctypes.windll.kernel32
+    handle = kernel32.OpenProcess(_PROCESS_SYNCHRONIZE, False, parent_pid)
+    if not handle:
+        log.warning(
+            "could not open handle to parent pid %s (already gone?); "
+            "parent-exit detection disabled", parent_pid
+        )
+        return None
+
+    def _wait():
+        kernel32.WaitForSingleObject(handle, _INFINITE)
+        kernel32.CloseHandle(handle)
+        log.info("parent process %s exited; shutting down", parent_pid)
+        _terminate_self_and_children()
+
+    t = threading.Thread(target=_wait, name="parent-watchdog", daemon=True)
+    t.start()
+    return t
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Fetch bedetheque.com pages for local clients.")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=56789)
+    parser.add_argument("--cloudscraper", action="store_true")
+    parser.add_argument("--url", help="URL to fetch (for cloudscraper mode)")
+    parser.add_argument("--parent_pid", type=int, default=None,
+                        help="PID to watch; process exits when this PID dies")
     ns = parser.parse_args()
+    
+    if ns.parent_pid:
+        watch_parent(ns.parent_pid)
+    else:
+        log.warning("no --parent_pid supplied; parent-exit detection disabled")
+
     # Run the daemon and exit with the appropriate status code.
     try:
-        exit_code = main(ns.host, ns.port)
+        if ns.cloudscraper and ns.url:
+            exit_code = main_cloudscraper(ns.url)
+        else:
+            exit_code = main_daemon(ns.host, ns.port)
     except KeyboardInterrupt:
         # Ctrl‑C before or during daemon start; treat as clean shutdown.
         log.info("shutting down (Ctrl‑C) via top‑level handler")

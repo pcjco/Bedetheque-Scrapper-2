@@ -1582,6 +1582,7 @@ DAEMON_EXE = "BedethequeFetcher.exe"
 # Name of the daemon target currently started by launch_daemon_thread
 # ("", DAEMON_EXE, or "BedethequeFetcher.py").
 daemon_running_name = ""
+use_cloudscraper = False
 
 _daemon_json_serializer = System.Web.Script.Serialization.JavaScriptSerializer()
 _daemon_json_serializer.MaxJsonLength = System.Int32.MaxValue
@@ -1590,6 +1591,30 @@ def _script_dir():
     """Directory holding this script (and the daemon: BedethequeFetcher.exe
     and/or BedethequeFetcher.py)."""
     return __file__[:-len('BedethequeScraper2.py')]
+
+def get_args(url=None):
+    """Get the command line arguments to launch the daemon (BedethequeFetcher.exe).
+    If url is provided, it will be passed as a command line argument."""
+    global daemon_running_name
+
+    exe = _script_dir() + DAEMON_EXE
+    script = _script_dir() + "BedethequeFetcher.py"
+
+    if File.Exists(exe):
+        # Full path: a bare exe name would not resolve to this folder.
+        what, args = exe, ""
+    elif File.Exists(script):
+        what, args = "BedethequeFetcher.py", '"' + script + '"'
+    else:
+        daemon_running_name = ""
+        log_BD.log(DAEMON_EXE + " / BedethequeFetcher.py not found in " + _script_dir, "", 1)
+        return None
+
+    if use_cloudscraper and url:
+        args += " --cloudscraper" + " --url " + url
+        log_BD.log("Using cloudscraper for URL: " + url, "", 1)
+
+    return what, args
 
 def is_daemon_running():
     """True if something (BedethequeFetcher) answers on its TCP port."""
@@ -1605,7 +1630,7 @@ def is_daemon_running():
 
 def _daemon_psi(what, args = ""):
     """ProcessStartInfo to start the daemon (the PyInstaller .exe, or a
-    Python 3 script through ``python -I``). ``what`` is either the daemon's
+    Python 3 script through ``python``). ``what`` is either the daemon's
     log name for a script ("BedethequeFetcher.py"), in which case the script
     path is passed as the sole argument and ``python`` is resolved via PATH,
     or the full path of a .exe to run directly. Common settings keep the
@@ -1614,40 +1639,29 @@ def _daemon_psi(what, args = ""):
     psi = ProcessStartInfo()
     if what.endswith(".py"):
         psi.FileName = "python"
-        # -I (isolated mode): keep this folder off sys.path, because it contains
-        # IronPython 2 stdlib shims (types.py, string.py, os.py, ...) that would
-        # shadow the real Python 3 stdlib and crash the script on first import.
-        psi.Arguments = "-I " + args
+        # BedethequeFetcher.py will take care of removing the current folder from the sys.path, so we don't need to pass -I anymore. Otherwise it will not look in the %appdata% folder for the cloudscraper module.
+        # psi.Arguments = "-I "
     else:
         psi.FileName = what
-        psi.Arguments = args
+
+    psi.Arguments += args
     psi.UseShellExecute = False
     psi.RedirectStandardOutput = True
     psi.RedirectStandardError = True
     psi.CreateNoWindow = True
+    psi.StandardOutputEncoding = System.Text.Encoding.UTF8
+    psi.StandardErrorEncoding = System.Text.Encoding.UTF8
     return psi
 
-def launch_daemon_thread():
-    """Launch BedethequeFetcher (same folder as this script) hidden in the
-    background, with a new .NET thread draining its output pipes so the
-    daemon (started as an external process) never blocks on a full pipe
-    buffer. The PyInstaller build ``BedethequeFetcher.exe`` is preferred; if
-    it is not present, the source script ``BedethequeFetcher.py`` (run with
-    Python 3) is launched instead. Returns the Process, or None if it could
-    not be started."""
+def launch_process(url=None):
+    """Launch BedethequeFetcher (same folder as this script) in the background."""
     global daemon_running_name
-    exe = _script_dir() + DAEMON_EXE
-    script = _script_dir() + "BedethequeFetcher.py"
+    what, args = get_args(url)
 
-    if File.Exists(exe):
-        # Full path: a bare exe name would not resolve to this folder.
-        what, args = exe, ""
-    elif File.Exists(script):
-        what, args = "BedethequeFetcher.py", '"' + script + '"'
-    else:
-        daemon_running_name = ""
-        log_BD.log(DAEMON_EXE + " / BedethequeFetcher.py not found in " + _script_dir(), "", 1)
-        return None
+    # PID of *this* (plugin host) process — the one we want the
+    # child to watch for, regardless of how it's packaged/launched.
+    own_pid = Process.GetCurrentProcess().Id
+    args = args + " --parent_pid " + str(own_pid)
 
     try:
         proc = Process()
@@ -1657,6 +1671,22 @@ def launch_daemon_thread():
         cError = log_Debug.log_Error()
         log_BD.log("Failed to start " + what, cError, 1)
         return None
+
+    # Log the short name (script name or exe file name, not a full path).
+    display = what[len(_script_dir()):] if what.startswith(_script_dir()) else what
+    daemon_running_name = '' if url else display
+    log_Debug.log(display + " launched (pid " + str(proc.Id) + ")")
+    return proc
+
+def launch_daemon_thread():
+    """Launch BedethequeFetcher (same folder as this script) hidden in the
+    background, with a new .NET thread draining its output pipes so the
+    daemon (started as an external process) never blocks on a full pipe
+    buffer. The PyInstaller build ``BedethequeFetcher.exe`` is preferred; if
+    it is not present, the source script ``BedethequeFetcher.py`` (run with
+    Python 3) is launched instead. Returns the Process, or None if it could
+    not be started."""
+    proc = launch_process()
 
     def _drain():
         err = ""
@@ -1678,10 +1708,7 @@ def launch_daemon_thread():
     drain = Thread(ThreadStart(_drain))
     drain.IsBackground = True
     drain.Start()
-    # Log the short name (script name or exe file name, not a full path).
-    display = what[len(_script_dir()):] if what.startswith(_script_dir()) else what
-    daemon_running_name = display
-    log_Debug.log(display + " launched (pid " + str(proc.Id) + ", port " + str(DAEMON_PORT) + ")")
+    log_Debug.log("launched daemon on port: " + str(DAEMON_PORT))
     return proc
 
 def ensure_fetch_daemon():
@@ -1732,6 +1759,83 @@ def _daemon_json_field(line, key):
     return System.Convert.ToString(value) if found else None
 
 def fetch(url):
+    if use_cloudscraper:
+        return fetch_cloudscraper(url)
+    else:
+        return fetch_daemon(url)
+
+def fetch_cloudscraper(url):
+    stdout_result = [None]
+    stderr_result = [None]
+    read_exceptions = []
+
+    if not url:
+        return ''
+
+    process = launch_process(url)
+    log_Debug.log("using cloudscraper fetcher for URL: " + str(url))
+
+    if process is None:
+        return ''
+
+    def read_stdout():
+        try:
+            stdout_result[0] = process.StandardOutput.ReadToEnd()
+        except Exception, e:
+            read_exceptions.append(e)
+
+    def read_stderr():
+        try:
+            stderr_result[0] = process.StandardError.ReadToEnd()
+        except Exception, e:
+            read_exceptions.append(e)
+
+    stdout_thread = System.Threading.Thread(System.Threading.ThreadStart(read_stdout))
+    stdout_thread.IsBackground = True
+
+    stderr_thread = System.Threading.Thread(System.Threading.ThreadStart(read_stderr))
+    stderr_thread.IsBackground = True
+    
+    try:
+        # Start draining both pipes *before* waiting on the process, so a
+        # large page can never fill a buffer and stall the child.
+        stdout_thread.Start()
+        stderr_thread.Start()
+
+        timeout = DAEMON_STARTWAIT_SECS + 25
+        timeout_ms = timeout * 1000
+        if not process.WaitForExit(timeout_ms):
+            try:
+                process.Kill()
+            except:
+                pass
+
+            raise Exception("Fetcher timed out after " + str(timeout) + " seconds")
+
+        # The process has already exited, so both ReadToEnd() calls
+        # should return almost immediately (they only block until EOF).
+        # Thread.Join, unlike Thread.Sleep, pumps the STA message queue
+        # while it waits, so it's safe to call from this thread.
+        stdout_thread.Join(10000)
+        stderr_thread.Join(10000)
+
+        if read_exceptions:
+            raise read_exceptions[0]
+        
+        if process.ExitCode != 0:
+            raise Exception("BedethequeFetcher exit code " + str(process.ExitCode) + ": " + stderr_result[0])
+
+        if not stdout_result[0]:
+            raise Exception("BedethequeFetcher did not return any content")
+
+        return stdout_result[0] or ''
+    finally:
+        try:
+            process.Dispose()
+        except:
+            pass
+
+def fetch_daemon(url):
     """Fetch a bedetheque page by asking the local BedethequeFetcher daemon over
     its TCP socket, speaking its line-delimited JSON protocol directly:
 
@@ -1787,8 +1891,8 @@ def fetch(url):
     return html
 
 def _read_url(url, bSingle):
-
     page = ''
+
     if bStopit:
         log_Debug.log("Cancelled from _read_url Start")
         return page
@@ -1801,12 +1905,13 @@ def _read_url(url, bSingle):
     else:
         target_url = url_fix("https://www.bedetheque.com/" + url.lstrip("/"))
 
+    log_Debug.log("Final fetcher URL: " + target_url)
     try:
         page = fetch(target_url)
         Application.DoEvents()
 
         if bStopit:
-            log_Debug.log("Cancelled from _read_url Start")
+            log_Debug.log("Cancelled from _read_url End")
             return ''
 
     except Exception, e:
@@ -2017,7 +2122,7 @@ class ProgressBarDialog(Form):
 def LoadSetting():
 
     global SHOWRENLOG, SHOWDBGLOG, DBGONOFF, DBGLOGMAX, RENLOGMAX, LANGENFR, ARTICLES, SUBPATT, COUNTOF, COUNTFINIE, TITLEIT, TIMEOUT, TIMEOUTS, TIMEPOPUP, FORMATARTICLES, ONESHOTFORMAT
-    global TBTags, CBCover, CBStatus, CBGenre, CBNotes, CBWeb, CBCount, CBSynopsys, CBImprint, CBLetterer, CBInker, CBPrinted, CBRating, CBISBN, CBDefault, CBRescrape, CBStop, EditionChoiceSetting, PadNumber, SerieResumeEverywhere
+    global TBTags, CBCover, CBStatus, CBGenre, CBNotes, CBWeb, CBCount, CBSynopsys, CBImprint, CBLetterer, CBInker, CBPrinted, CBRating, CBISBN, CBDefault, CBRescrape, CBStop, EditionChoiceSetting, PadNumber, SerieResumeEverywhere, use_cloudscraper
     global CBLanguage, CBEditor, CBFormat, CBColorist, CBPenciller, CBWriter, CBTitle, CBSeries, CBCouverture, SerieChoiceSetting, ShortWebLink, AcceptGenericArtists, SkipSummaryReport
 
     ###############################################################
@@ -2163,6 +2268,10 @@ def LoadSetting():
     except Exception as e:
         CBRescrape = False
     try:
+        use_cloudscraper = ft(MySettings.Get("use_cloudscraper"))
+    except Exception as e:
+        use_cloudscraper = False
+    try:
         CBStop = ft(MySettings.Get("CBStop"))
     except Exception as e:
         CBStop = True
@@ -2289,6 +2398,7 @@ def SaveSetting():
     MySettings.Set("CBTitle",  tf(CBTitle))
     MySettings.Set("CBDefault",  tf(CBDefault))
     MySettings.Set("CBRescrape",  tf(CBRescrape))
+    MySettings.Set("use_cloudscraper", tf(use_cloudscraper))
     MySettings.Set("ARTICLES",  ARTICLES)
     MySettings.Set("SUBPATT",  SUBPATT)
     MySettings.Set("COUNTOF",  tf(COUNTOF))
@@ -2455,6 +2565,7 @@ class BDConfigForm(Form):
         self._PadNumber = System.Windows.Forms.TextBox()
         self._labelPadNumber = System.Windows.Forms.Label()
         self._CBRescrape = System.Windows.Forms.CheckBox()
+        self._use_cloudscraper = System.Windows.Forms.CheckBox()
         self._groupSerieChoice = System.Windows.Forms.GroupBox()
         self._groupEditionChoice = System.Windows.Forms.GroupBox()
         self._radioSerieNoChoice = System.Windows.Forms.RadioButton()
@@ -2476,7 +2587,7 @@ class BDConfigForm(Form):
         self._TabData.Location = System.Drawing.Point(0, 0)
         self._TabData.Name = "TabData"
         self._TabData.SelectedIndex = 0
-        self._TabData.Size = System.Drawing.Size(612, 390)
+        self._TabData.Size = System.Drawing.Size(612, 394)
         self._TabData.TabIndex = 22
         #
         # tabPage1
@@ -2804,6 +2915,17 @@ class BDConfigForm(Form):
         self._CBRescrape.Text = Trans(137)
         self._CBRescrape.UseVisualStyleBackColor = True
         self._CBRescrape.CheckState = if_else(CBRescrape, CheckState.Checked, CheckState.Unchecked)
+        #
+        # use_cloudscraper
+        #
+        self._use_cloudscraper.Font = System.Drawing.Font("Microsoft Sans Serif", 8.25, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, 0)
+        self._use_cloudscraper.Location = System.Drawing.Point(8, 342)
+        self._use_cloudscraper.Name = "use_cloudscraper"
+        self._use_cloudscraper.Size = System.Drawing.Size(400, 20)
+        self._use_cloudscraper.TabIndex = 22
+        self._use_cloudscraper.Text = Trans(152)
+        self._use_cloudscraper.UseVisualStyleBackColor = True
+        self._use_cloudscraper.CheckState = if_else(use_cloudscraper, CheckState.Checked, CheckState.Unchecked)
         #
         # COUNTOF
         #
@@ -3141,7 +3263,7 @@ class BDConfigForm(Form):
     def button_Click(self, sender, e):
 
         global SHOWRENLOG, SHOWDBGLOG, DBGONOFF, DBGLOGMAX, RENLOGMAX, LANGENFR, ONESHOTFORMAT
-        global TBTags, CBCover, CBStatus, CBGenre, CBNotes, CBWeb, CBCount, CBSynopsys, CBImprint, CBLetterer, CBInker, CBPrinted, CBRating, CBISBN, CBDefault, CBRescrape, CBStop, EditionChoiceSetting, SerieResumeEverywhere, AcceptGenericArtists, SkipSummaryReport
+        global TBTags, CBCover, CBStatus, CBGenre, CBNotes, CBWeb, CBCount, CBSynopsys, CBImprint, CBLetterer, CBInker, CBPrinted, CBRating, CBISBN, CBDefault, CBRescrape, CBStop, EditionChoiceSetting, SerieResumeEverywhere, AcceptGenericArtists, use_cloudscraper, SkipSummaryReport
         global CBLanguage, CBEditor, CBFormat, CBColorist, CBPenciller, CBWriter, CBTitle, CBSeries, ARTICLES, SUBPATT, COUNTOF, CBCouverture, COUNTFINIE, TITLEIT, TIMEOUT, TIMEOUTS, TIMEPOPUP, FORMATARTICLES, PadNumber, SerieChoiceSetting, ShortWebLink
 
         if sender.Name.CompareTo(self._OKButton.Name) == 0:
@@ -3177,6 +3299,7 @@ class BDConfigForm(Form):
             CBSeries = if_else(self._scrapedData['Series']['state'] == CheckState.Checked, True, False)
             CBDefault = if_else(self._CBDefault.CheckState == CheckState.Checked, True, False)
             CBRescrape = if_else(self._CBRescrape.CheckState == CheckState.Checked, True, False)
+            use_cloudscraper = if_else(self._use_cloudscraper.CheckState == CheckState.Checked, True, False)
             CBStop = if_else(self._labelTIMEPOPUP.CheckState == CheckState.Checked, True, False)
 
             if self._radioEditionAlwaysChoice.Checked:
