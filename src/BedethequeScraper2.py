@@ -121,152 +121,117 @@ LAST_FIRST_NAMES = re.compile(LAST_FIRST_NAMES_PATTERN)
 
 ########################################
 # Info Serie
-SERIE_LIST_PATTERN = r'<a\shref="https://www.bedetheque.com/serie-(.*?)">.*?libelle">(.*?)\r'
+SERIE_LIST_PATTERN = r'<a\shref="https://www.bedetheque.com/serie-(.*?)">.+?class="bdt-liste-libelle">\s+<b>(.+?)</b>'
 
-SERIE_LIST_CHECK_PATTERN = r's.ries\strouv.{20,60}?La\srecherche.*?\srenvoie\splus\sde\s500\sdonn'
+SERIE_LIST_CHECK_PATTERN = r'séries\strouvées{40,80}?La\srecherche\srenvoie\splus\sde'
 SERIE_LIST_CHECK = re.compile(SERIE_LIST_CHECK_PATTERN, re.IGNORECASE | re.DOTALL)
 
-SERIE_URL_PATTERN = r'<a\shref="(.*?)">\r\n.{50,60}<span\sclass="libelle">%s\s*?</span>'
-
-ALBUM_ID_PATTERN = r'id="%s".*?album-%s(.*?)\.html'
-ALBUM_INFO_PATTERN = r'<meta\sname="description"\scontent="(.*?)"'
+SERIE_URL_PATTERN = r'<a href="([^"]+?)">(?:(?!</a>).)+?<span class="bdt-liste-libelle"><b>%s</b></span>'
 
 # Encart "Informations sur l'album"
-INFOS_ALBUMS_PATTERN = r'<ul class="infos-albums">.+?</ul>'
+INFOS_ALBUMS_PATTERN = r'<dl class="bdt-sheet">.+?</div>'
 INFOS_ALBUMS = re.compile(INFOS_ALBUMS_PATTERN, re.IGNORECASE | re.DOTALL)
 
-SERIE_ORIGIN_PATTERN = r'<span><i\sclass="icon-globe"></i>(.*?)</span>'
+SERIE_ORIGIN_PATTERN = r'<li[^<>]+?(?<="Origine de la série").+?class="bdt-sh-flag"[^<>]+?>([^<>]+?)<'
 SERIE_ORIGIN = re.compile(SERIE_ORIGIN_PATTERN, re.IGNORECASE)
 
-SERIE_LANGUE_PATTERN = r'class="flag"/>(.*?)</span>'
+SERIE_LANGUE_PATTERN = r'<li[^<>]+?(?<="Langue de parution").+?class="bdt-sh-flag"[^<>]+?>([^<>]+?)<'
 SERIE_LANGUE = re.compile(SERIE_LANGUE_PATTERN, re.IGNORECASE)
 
-SERIE_GENRE_PATTERN = r'<span\sclass="style">(.*?)<'
+SERIE_GENRE_PATTERN = r'class="bdt-tag bdt-sh-genre"[^<>]+?>([^<>]+?)<'
 SERIE_GENRE = re.compile(SERIE_GENRE_PATTERN, re.IGNORECASE | re.MULTILINE | re.DOTALL)
 
-SERIE_RESUME_PATTERN = r'<meta\sname="description"\scontent="(.*?)"\s/>'
+SERIE_RESUME_PATTERN = r'class="bdt-sh-resume">([^<>]*?)<'
 SERIE_RESUME = re.compile(SERIE_RESUME_PATTERN, re.IGNORECASE | re.MULTILINE | re.DOTALL)
 
-SERIE_STATUS_PATTERN = r'<h3>.*?<span><i\sclass="icon-info-sign"></i>(.*?)</span>'
+SERIE_STATUS_PATTERN = r'class="bdt-sh-parution">([^<>]+?)<'
 SERIE_STATUS = re.compile(SERIE_STATUS_PATTERN, re.IGNORECASE | re.MULTILINE | re.DOTALL)
 
 SERIE_NOTE_PATTERN = r'<p\sclass="static">Note:\s<strong>\s(?P<note>[^<]*?)</strong>'
 SERIE_NOTE = re.compile(SERIE_NOTE_PATTERN, re.IGNORECASE | re.MULTILINE | re.DOTALL)
 
-SERIE_COUNT_PATTERN = r'class="icon-book"></i>\s(\d+)'
+SERIE_COUNT_PATTERN = r'title="Nombre de tomes de la série">(\d+)'
 SERIE_COUNT = re.compile(SERIE_COUNT_PATTERN, re.IGNORECASE | re.MULTILINE | re.DOTALL)
 
-SERIE_COUNT_REAL_PATTERN = r'liste-albums-side(.*?)WIDGET'
+SERIE_COUNT_REAL_PATTERN = r'class="bdt-box-albums-liste">(.+?)</ul>'
 SERIE_COUNT_REAL = re.compile(SERIE_COUNT_REAL_PATTERN, re.IGNORECASE | re.MULTILINE | re.DOTALL)
 
-SERIE_COUNTOF_PATTERN = r'<label>(.*?)<span'
+SERIE_COUNTOF_PATTERN = r'class="bdt-box-albums-num"[^<>]+?>([^<>]+?)<span'
 SERIE_COUNTOF = re.compile(SERIE_COUNTOF_PATTERN, re.IGNORECASE | re.MULTILINE | re.DOTALL)
 
 SERIE_HEADER2_PATTERN = r'<h3(.+?)</p'
 SERIE_HEADER2 = re.compile(SERIE_HEADER2_PATTERN, re.IGNORECASE | re.MULTILINE | re.DOTALL)
 
 # Info Serie for Quickscrape
-SERIE_QSERIE_PATTERN = r'<h1>\s*<a href="([^"]+)"[^>]*>\s*([^<]+)\s*</a'
+SERIE_QSERIE_PATTERN = r'<h1>\s*<a href="[^<>]+/serie-[^\.]+\.html">([^"<>]+)</a>'
 SERIE_QSERIE = re.compile(SERIE_QSERIE_PATTERN, re.IGNORECASE | re.MULTILINE | re.DOTALL)
 
 # Info Album from Album
-INFO_SERIENAMENUMBER_ALBUM_PATTERN = r'<span\sclass="type">S.*?rie\s:\s</span>\s?(.*?)<.*?id="%s">.*?<div\sclass="titre">(?:(.*?)<.*?numa">(.*?)</span>\.?\s?)?(.*?)<'
 
 ALBUM_BDTHEQUE_NOTNUM_PATTERN = r'tails">.*?<span\sclass="numa"></span>.*?<a name="(.*?)"'
 ALBUM_BDTHEQUE_NOTNUM = re.compile(ALBUM_BDTHEQUE_NOTNUM_PATTERN, re.IGNORECASE | re.MULTILINE | re.DOTALL)
 
-ALBUM_TITLE_PATTERN = r'itemprop="url"\shref="%s"\stitle="(.*?)">'
-
-ALBUM_EVAL_PATTERN = r'ratingValue">(.*?)<'
+ALBUM_EVAL_PATTERN = r'Note: <span itemprop="ratingValue">(.*?)<'
 ALBUM_EVAL = re.compile(ALBUM_EVAL_PATTERN, re.IGNORECASE | re.MULTILINE | re.DOTALL)
 
-ALBUM_MULTI_AUTHOR_NAMES_PATTERN = r'">(.*?)</'
+ALBUM_MULTI_AUTHOR_NAMES_PATTERN = r'">([^<>]*?)</'
 ALBUM_MULTI_AUTHOR_NAMES = re.compile(ALBUM_MULTI_AUTHOR_NAMES_PATTERN, re.IGNORECASE | re.MULTILINE | re.DOTALL)
 
-ALBUM_SCENAR_MULTI_AUTHOR_PATTERN = r'<label>sc.*?nario\s:</label>(.*?)<label>[^&]'
+ALBUM_SCENAR_MULTI_AUTHOR_PATTERN = r"<dt>Sc.nario</dt>\s*<dd>(.+?)<dt>[^<>]+?</dt>"
 ALBUM_SCENAR_MULTI_AUTHOR = re.compile(ALBUM_SCENAR_MULTI_AUTHOR_PATTERN, re.IGNORECASE | re.MULTILINE | re.DOTALL)
 
 # Storyboard artists (i.e https://www.bedetheque.com/BD-Aio-Zitelli-Tome-1-Recits-de-guerre-14-18-215576.html)
-ALBUM_STORYBOARD_MULTI_AUTHOR_PATTERN = r'label>storyboard\s:</label>(.*?)<label>[^&]'
+ALBUM_STORYBOARD_MULTI_AUTHOR_PATTERN = r"<dt>storyboard</dt>\s*<dd>(.+?)<dt>[^<>]+?</dt>"
 ALBUM_STORYBOARD_MULTI_AUTHOR = re.compile(ALBUM_STORYBOARD_MULTI_AUTHOR_PATTERN, re.IGNORECASE | re.MULTILINE | re.DOTALL)
 
-ALBUM_DESSIN_MULTI_AUTHOR_PATTERN = r'<label>dessin\s:</label>(.*?)<label>[^&]'
+ALBUM_DESSIN_MULTI_AUTHOR_PATTERN = r"<dt>dessin</dt>\s*<dd>(.+?)<dt>[^<>]+?</dt>"
 ALBUM_DESSIN_MULTI_AUTHOR = re.compile(ALBUM_DESSIN_MULTI_AUTHOR_PATTERN, re.IGNORECASE | re.MULTILINE | re.DOTALL)
 
-ALBUM_COLOR_MULTI_AUTHOR_PATTERN = r'<label>couleurs\s:</label>(.*?)<label>[^&]'
+ALBUM_COLOR_MULTI_AUTHOR_PATTERN = r"<dt>Couleurs</dt>\s*<dd>(.+?)<dt>[^<>]+?</dt>"
 ALBUM_COLOR_MULTI_AUTHOR = re.compile(ALBUM_COLOR_MULTI_AUTHOR_PATTERN, re.IGNORECASE | re.MULTILINE | re.DOTALL)
 
-ALBUM_COUVERT_MULTI_AUTHOR_PATTERN = r'<label>couverture\s:</label>(.*?)<label>[^&]'
+ALBUM_COUVERT_MULTI_AUTHOR_PATTERN = r"<dt>Couverture</dt>\s*<dd>(.+?)<dt>[^<>]+?</dt>"
 ALBUM_COUVERT_MULTI_AUTHOR = re.compile(ALBUM_COUVERT_MULTI_AUTHOR_PATTERN, re.IGNORECASE | re.MULTILINE | re.DOTALL)
 
-ALBUM_LETTRAGE_MULTI_AUTHOR_PATTERN = r'<label>lettrage\s:</label>(.*?)<label>[^&]'
+ALBUM_LETTRAGE_MULTI_AUTHOR_PATTERN = r"<dt>Lettrage</dt>\s*<dd>(.+?)<dt>[^<>]+?</dt>"
 ALBUM_LETTRAGE_MULTI_AUTHOR = re.compile(ALBUM_LETTRAGE_MULTI_AUTHOR_PATTERN, re.IGNORECASE | re.MULTILINE | re.DOTALL)
 
-ALBUM_INKER_MULTI_AUTHOR_PATTERN = r'<label>encrage\s:</label>(.*?)<label>[^&]'
+ALBUM_INKER_MULTI_AUTHOR_PATTERN = r"<dt>Encrage</dt>\s*<dd>(.+?)<dt>[^<>]+?</dt>"
 ALBUM_INKER_MULTI_AUTHOR = re.compile(ALBUM_INKER_MULTI_AUTHOR_PATTERN, re.IGNORECASE | re.MULTILINE | re.DOTALL)
 
-ALBUM_DEPOT_PATTERN = r'<label>D.pot L.gal\s:\s?</label>(?P<month>[\d|-]{0,2})/?(?P<year>[\d]{2,4})?'
+ALBUM_DEPOT_PATTERN = r"<dt>D.p.t L.gal</dt>\s+<dd>(?P<month>[\d|-]{0,2})/?(?P<year>[\d]{2,4})?"
 ALBUM_DEPOT = re.compile(ALBUM_DEPOT_PATTERN, re.IGNORECASE | re.MULTILINE | re.DOTALL)
 
-ALBUM_ACHEVE_PATTERN = r'<label>Achev.*?\s:\s?</label>(?P<month>[\d|-]{0,2})/?(?P<year>[\d]{2,4})?<'
+ALBUM_ACHEVE_PATTERN = r'<dt>Achev.*?\s:\s</dt>\s+<dd>(?P<month>[\d|-]{0,2})/?(?P<year>[\d]{2,4})?<'
 ALBUM_ACHEVE = re.compile(ALBUM_ACHEVE_PATTERN, re.IGNORECASE | re.MULTILINE | re.DOTALL)
 
-ALBUM_EDITEUR_PATTERN = r'<label>Editeur\s:\s?</label>(.*?)</'
+ALBUM_EDITEUR_PATTERN = r'<dt>.diteur</dt>\s+<dd>(.*?)</dd>'
 ALBUM_EDITEUR = re.compile(ALBUM_EDITEUR_PATTERN, re.IGNORECASE | re.MULTILINE | re.DOTALL)
 
-ALBUM_COLLECTION_PATTERN = r'<label>Collection\s:\s?</label>(?:<a href.+?>)*([^><]+?)<'
+ALBUM_COLLECTION_PATTERN = r"<dt>Collection</dt><dd>(?:<a href.+?>)*([^><]+?)<"
 ALBUM_COLLECTION = re.compile(ALBUM_COLLECTION_PATTERN, re.IGNORECASE | re.MULTILINE | re.DOTALL)
 
-ALBUM_TAILLE_PATTERN = r'<label>Format\s:\s?</label>.*?(.+?)</'
+ALBUM_TAILLE_PATTERN = r"<dt>Format</dt>\s*<dd>(.*?)</dd>"
 ALBUM_TAILLE = re.compile(ALBUM_TAILLE_PATTERN, re.IGNORECASE | re.MULTILINE | re.DOTALL)
 
-ALBUM_ISBN_PATTERN = r'<label>.*?ISBN\s:\s</label.*?>([^<]*?)</'
+ALBUM_ISBN_PATTERN = r"<dt>EAN/ISBN</dt>\s*<dd>(.*?)</dd>"
 ALBUM_ISBN = re.compile(ALBUM_ISBN_PATTERN, re.IGNORECASE | re.DOTALL)
 
-ALBUM_PLANCHES_PATTERN = r'<label>Planches\s:\s?</label>(\d*?)</'
+ALBUM_PLANCHES_PATTERN = r"<dt>Planches</dt>\s*<dd>(.*?)</dd>"
 ALBUM_PLANCHES = re.compile(ALBUM_PLANCHES_PATTERN, re.IGNORECASE | re.MULTILINE | re.DOTALL)
 
-ALBUM_COVER_PATTERN = r'<meta\sproperty="og:title".*?="https:(.*?)"'
-ALBUM_COVER = re.compile(ALBUM_COVER_PATTERN, re.IGNORECASE | re.MULTILINE | re.DOTALL)
-
-ALBUM_RESUME_PATTERN = r'<meta\sname="description"\scontent="(.*?)"'
-ALBUM_RESUME = re.compile(ALBUM_RESUME_PATTERN, re.IGNORECASE | re.MULTILINE | re.DOTALL)
-
-ALBUM_INFOEDITION_PATTERN = r'<em>Info\s.*?dition\s:\s?</em>\s?(.*?)<'
+ALBUM_INFOEDITION_PATTERN = r"<b>Info\s.*?dition</b>\s?(.*?)<"
 ALBUM_INFOEDITION = re.compile(ALBUM_INFOEDITION_PATTERN, re.IGNORECASE | re.MULTILINE | re.DOTALL)
 
-ALBUM_URL_PATTERN = r'<label>%s<span\sclass="numa.*?\.<.*?<a\shref="(.*?)"\s.*?title=.+?">(.+?)</'
-
-ALBUM_SINGLE_URL_PATTERN = r'<label>%s<span\sclass="numa.*?\.%s<.*?<a\shref="(.*?)\#(.*?)"'
-
-ALBUM_NON_NUM_URL_PATTERN = r'<label><span\sclass="numa">%s</span>.*?\.<.*?<a\shref="(.*?)"\s.*?title=.+?">(.+?)</'  
-
-ALBUM_SINGLEALBUM_URLALL_PATTERN = r'<h3>(.*?)</h3>'
-ALBUM_SINGLEALBUM_URLALL = re.compile(ALBUM_SINGLEALBUM_URLALL_PATTERN, re.DOTALL | re.IGNORECASE)
-
-ALBUM_SINGLEALBUM_URL_PATTERN = r'href="(.*?)"\stitle.*?">.*?%s<span\sclass="numa">%s<'
-
-ALBUMDETAILS_URL_PATTERN = r'https://www.bedetheque.com/album-%s-(.*?)"'
-ALBUMDETAILSSINGLE_URL_PATTERN = r'https://www.bedetheque.com/album-(.*?)"'
-
-ALBUM_URL_PATTERN_NOTNUM = r'<div\sclass="album.*?href="(.*?)"'
-ALBUM_URL_NOTNUM = re.compile(ALBUM_URL_PATTERN_NOTNUM, re.MULTILINE | re.DOTALL | re.IGNORECASE)
-
-ALBUM_QNUM_PATTERN = r'og:title"\scontent="(.*?)-(.*?)-?\s(.*?)"\s*/>'
-ALBUM_QNUM = re.compile(ALBUM_QNUM_PATTERN, re.IGNORECASE)
-
-ALBUM_QTITLE_PATTERN = r'titre.*?%s<span.*?name">(.*?)<'
 ########################################
 # Info Revues
-REVUE_LIST_PATTERN = r'<a\shref="https://www.bedetheque.com/revue-(.*?)">.*?libelle">(.*?)\r'
+REVUE_LIST_PATTERN = r'<a\shref="https://www.bedetheque.com/revue-(.*?)">.+?class="bdt-liste-libelle">\s+<b>(.+?)</b>'
 
-REVUE_LIST_EXISTS_PATTERN = r'<h3>\d{1,3} revue\w?? trouvée\w??</h3>'
+REVUE_LIST_EXISTS_PATTERN = r'<h2>\d{1,3} revue\w?? trouvée\w??</h2>'
 REVUE_LIST_EXISTS = re.compile(REVUE_LIST_EXISTS_PATTERN, re.IGNORECASE | re.DOTALL)
 
-REVUE_LIST_CHECK_PATTERN = r'<h1>Revues</h1>.*?La\srecherche\seffectu.*?\srenvoie\splus\sde\s.*?<h1>S.*?ries<'
+REVUE_LIST_CHECK_PATTERN = r'revues\strouvées{40,80}?La\srecherche\srenvoie\splus\sde'
 REVUE_LIST_CHECK = re.compile(REVUE_LIST_CHECK_PATTERN, re.IGNORECASE | re.DOTALL)
-
-REVUE_CALC_PATTERN = r'<option\svalue="(.{1,160}?)">%s</'
 
 REVUE_HEADER_PATTERN = r'class="couv"(.{1,100}?couvertures"\shref="(https.{1,150}?)">.{1,600}?class="titre".{1,100}?#(%s)\..+?class="autres".+?)</li>'
 REVUE_HEADER_PATTERN_ALT = r'<a name="%s">.+?class="couv"(.{1,100}?couvertures"\shref="(https.{1,150}?)">.+?class="titre".{1,100}?#(.+?)\..+?class="autres".+?)</li>'
@@ -540,7 +505,7 @@ def SetSerieId(book, serie, num, nBooksIn):
                 return ''
 
             if request:
-                RegCompile = re.compile(SERIE_URL_PATTERN % checkRegExp(serie.strip()),  re.IGNORECASE)
+                RegCompile = re.compile(SERIE_URL_PATTERN % checkRegExp(serie.strip()),  re.IGNORECASE | re.DOTALL)
                 nameRegex = RegCompile.search(request)
 
                 if nameRegex:
@@ -828,6 +793,7 @@ def parseSerieInfo(book, serieUrl, lDirect):
 
                 book.SetCustomValue("bedetheque_parution", fin)
 
+                log_Debug.log("Parution: " + fin)
                 if ("finie" in fin) or (sAlbumNum.lower() == "one shot"):
                     book.SeriesComplete = YesNo.Yes
                     SerieState = Trans(54)
@@ -924,12 +890,21 @@ def parseSerieInfo(book, serieUrl, lDirect):
 
                     log_Debug.log(Trans(59) + if_else(sAlbumNum.lower() == "one shot", "1", cCountText))
 
-            Regex = re.compile(r'<label>([^<]*?)<span\sclass=\"numa\">(.*?)</span.*?<a\shref=\"(.*?)".*?title=.+?\">(.+?)</', re.IGNORECASE | re.DOTALL)
+            """ Special case : empty bdt-box-albums-num, only bdt-numa is present
+            <li>
+                <a href="https://www.bedetheque.com/BD-Teddy-Ted-Les-recits-complets-de-Pif-HS-Le-justicier-de-Long-River-124038.html" title="Le justicier de Long River">
+                        <span class="bdt-box-albums-num" title="HS"><span class="bdt-numa">HS</span></span>
+                        <span class="bdt-box-albums-titre">Le justicier de Long River</span>
+                        <span class="bdt-box-albums-dl">01/2011</span>
+                </a>
+            </li>
+            """
+            Regex = re.compile(r'<li>\s+?<a href="(?P<url>[^"]+?)" title="(?P<title>[^"]+?)">.+?class="bdt-box-albums-num"[^<>]+?>(?P<tome>[^<>]*?)<span class="bdt-numa">(?P<alt>[^<>]*?)<', re.IGNORECASE | re.DOTALL)
 
             i = 0
             ListAlbum, ListAlbumAll = list(), list()
             for r in Regex.finditer(request):
-                n, a, url, title = r.group(1), r.group(2), r.group(3), r.group(4)
+                n, a, url, title = r.group("tome"), r.group("alt"), r.group("url"), r.group("title")
                 num = if_else(n,n, if_else(a, a, ""))
                 ListAlbumAll.append([url, num + ". " + title, str(i).zfill(3)])
                 if sAlbumNum != "" and (num == sAlbumNum) and not lDirect:
@@ -942,7 +917,7 @@ def parseSerieInfo(book, serieUrl, lDirect):
             albumURL = AlbumChooser(ListAlbum)
             if not albumURL and not SkipAlbum:
                 # Nothing found and not cancelled, maybe not on the side list if only one album
-                Regex = re.compile(r'class="titre"\shref="(.+?)".+?<span class="numa">.*?</span>.+?', re.IGNORECASE | re.DOTALL)
+                Regex = re.compile(r'class="bdt-edition-head">\s*<h3>\s*<a[^<>]+?href="([^"]+?)"', re.IGNORECASE | re.DOTALL)
                 r = Regex.search(request)
                 if r:
                     albumURL = r.group(1)
@@ -1126,13 +1101,14 @@ def parseRevueInfo(book, SerieInfoRegex, serieUrl, Numero = "", serie = ""):
         return False
 
 class AlbumInfo:
-    def __init__ (self, n, a, title, info, couv, url):
+    def __init__ (self, n, a, title, info, couv, url, bookId):
         self.Couv = couv
         self.N = n
         self.A = a
         self.Title = title
         self.Info = info
         self.URL = url
+        self.ID = bookId
 
 def preparseAlbumInfo(book, albumUrl):
     '''
@@ -1206,6 +1182,8 @@ def parseAlbumInfo(book, pageUrl, num, cached_html = None):
             AlbumBDThequeNum = ID_ALBUM
 
     else:
+        Result = MessageBox.Show(ComicRack.MainWindow, "We pass in code that we think is not used!!!","Warning", MessageBoxButtons.OK, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button1)
+
         # Album N. est Numerique
         if sAlbumNum or sAlbumAltNum:
             ALBUM_BDTHEQUE_NUM_PATTERN = r'tails">%s<span\sclass="numa">%s</span>.*?<a name="(.*?)"'
@@ -1239,25 +1217,23 @@ def parseAlbumInfo(book, pageUrl, num, cached_html = None):
 
     try:
         i = 0
-        # Log album HTML content for debugging
-        log_Debug.log("Album HTML content: " + albumHTML)
         ListAlbum = list()
         pickedVar = ""
         info = albumHTML
-        tome = re.search(r'<h2>\s*(-?\w*?)<span class="numa">(.*?)</span>.', albumHTML, re.IGNORECASE | re.DOTALL)
+        tome = re.search(r'<h2 class="bdt-ah-sub">\s*([^<>]+?)<span class="bdt-numa">(.*?)</span>', albumHTML, re.IGNORECASE | re.DOTALL)
         #if no tome take alt number from top of the page
-        t = if_else(tome.group(1), tome.group(1), checkWebChar(tome.group(2).strip())) if tome else ""
-        #nameRegex groups (inside editions): group#1 => cover, group#2 => tome, group#3 => alt, group#4 => titre, group#5 => info (artists table), group#6 => url anchor
-        nameRegex = re.compile(r'class="couv">.+?href="(.+?)".+?class="titre".*?>([^<>]*?)<span class="numa">(.*?)</span>.+?\r\n\s+(.+?)</.+?>(.+?)<div class="album-admin".*?id="bt-album-(.+?)">', re.IGNORECASE | re.DOTALL | re.MULTILINE)
-        for albumPick in nameRegex.finditer(albumHTML):
-            couv = re.sub('/cache/thb_couv/', '/media/Couvertures/', albumPick.group(1)) if albumPick.group(1) else "" #get higher resolution image
-            title = checkWebChar(albumPick.group(4).strip())
-            nfo = albumPick.group(5)
+        t = if_else(tome.group(1).strip(), tome.group(1).strip(), checkWebChar(tome.group(2).strip())) if tome else ""
+        nameRegex = re.compile(r'<article class="bdt-edition bdt-edition--detail" id="ed-(?P<id>[^"]+)">.+?<h3>.+?<span class="bdt-numa">(?P<alt>[^\s<]+)*.+?</h3>.+?<a class="bdt-img bdt-ecov[^"]+"\shref="(?P<couv>[^"]+)".+?<dt>Titre</dt><dd><b>(?P<titre>[^<]+).+?<dt>Identifiant</dt>(?P<infos>.+?)</article>', re.IGNORECASE | re.DOTALL | re.MULTILINE)
+        for albumPick in nameRegex.finditer(albumHTML):    
+            couv = albumPick.group("couv")
+            title = checkWebChar(albumPick.group("titre").strip())
+            nfo = albumPick.group("infos")
             # a is altNumber
-            a = checkWebChar(albumPick.group(3).strip() if is_integer(t) else albumPick.group(3).strip().replace(t,'',1).strip())
-            url = pageUrl + "#reed" if i == 0 else pageUrl + "#" + albumPick.group(6).strip()
-            albumInfo = AlbumInfo(t, a, title, nfo, couv, url)
-            log_Debug.log("Tome)", t, "Alt)", a, "Title)", title)
+            a = checkWebChar(albumPick.group("alt").strip() if is_integer(t) else albumPick.group("alt").strip().replace(t,'',1).strip()) if albumPick.group("alt") else ""
+            bookId = albumPick.group("id").strip()
+            url = pageUrl + "#reed" if i == 0 else pageUrl + "#" + bookId
+            albumInfo = AlbumInfo(t, a, title, nfo, couv, url, bookId)
+            log_Debug.log("Tome)", t, "Alt)", a, "Title)", title, "bookId)", bookId)
 
             ListAlbum.append([a, albumInfo, str(i).zfill(3)])
             i = i + 1
@@ -1312,7 +1288,7 @@ def parseAlbumInfo(book, pageUrl, num, cached_html = None):
             #web
             if CBWeb == True and not CBRescrape:
                 if not ShortWebLink:
-                    book.Web = pickedVar.URL.replace("#reed", "")
+                    book.Web = pickedVar.URL.replace("#reed", "") if isinstance(pickedVar, AlbumInfo) else ""
                     log_Debug.log(Trans(123), book.Web)
                 else:
                     cBelid = re.search(r'-(\d+).html', pageUrl)
@@ -1343,8 +1319,8 @@ def parseAlbumInfo(book, pageUrl, num, cached_html = None):
                 book.Count = -1
 
             series = book.Series
-            nameRegex = re.search('bandeau-info.+?<h1>.+?>([^"]+?)[<>]', albumHTML, re.IGNORECASE | re.DOTALL | re.MULTILINE)# Les 5 Terres Album et Serie, dans l'entête
-            nameRegex2 = re.search("<label>S.rie : </label>(.+?)</li>", info_album, re.IGNORECASE | re.DOTALL | re.MULTILINE)# 5 Terres (Les) sur Album seulement, dans l'encart
+            nameRegex = re.search('bdt-ah-top.+?<h1>.+?>([^"]+?)[<>]', albumHTML, re.IGNORECASE | re.DOTALL | re.MULTILINE)# Les 5 Terres Album et Serie, dans l'entête
+            nameRegex2 = re.search("<dt>S.rie</dt><dd><a[^>]+?>([^<]+?)</a>", info_album, re.IGNORECASE | re.DOTALL | re.MULTILINE)# 5 Terres (Les) sur Album seulement, dans l'encart
             if nameRegex:
                 series = checkWebChar(nameRegex.group(1).strip())
                 seriesFormat = checkWebChar(nameRegex2.group(1).strip()) if nameRegex2 else series
@@ -1472,10 +1448,11 @@ def parseAlbumInfo(book, pageUrl, num, cached_html = None):
             # Album summary is optional => So, there is a specific research
             if CBSynopsys:
                 summary = ""
-                nameRegex = ALBUM_RESUME.search(albumHTML, 0)
-                if nameRegex:
-                    resume = strip_tags(nameRegex.group(1)).strip()
-                    resume = re.sub(r'Tout sur la série.*?:\s?', "", resume, re.IGNORECASE)
+                # Summary on page is truncated, so we need to fetch the summary via the ajax pageUrl -> baseurl + "ajax/resume/album/" + id
+                summaryUrl = "ajax/resume/album/" + bookId
+                resume = _read_url(summaryUrl, False)
+                if resume:
+                    resume = strip_tags(resume).strip()
                     PrintSerieResume = True if SerieResumeEverywhere else book.Number == '1'
                     if Serie_Resume and PrintSerieResume and remove_accents(Serie_Resume) != remove_accents(resume):
                         summary = Serie_Resume + if_else(resume, chr(10) + chr(10) + if_else(book.Title, '>' + book.Title + '< ' + chr(10), "") + resume, "")                    
@@ -1826,7 +1803,7 @@ def fetch_cloudscraper(url):
             raise Exception("BedethequeFetcher exit code " + str(process.ExitCode) + ": " + stderr_result[0])
 
         if not stdout_result[0]:
-            raise Exception("BedethequeFetcher did not return any content")
+            raise NoContentError("BedethequeFetcher did not return any content")
 
         return stdout_result[0] or ''
     finally:
@@ -1914,6 +1891,9 @@ def _read_url(url, bSingle):
             log_Debug.log("Cancelled from _read_url End")
             return ''
 
+    except NoContentError, nce:
+        debuglog("No content returned for URL: " + target_url + ": " + str(nce))
+
     except Exception, e:
         log_Debug.log(Trans(60))
         log_Debug.log(Trans(61), e)
@@ -1922,6 +1902,9 @@ def _read_url(url, bSingle):
         Result = MessageBox.Show(ComicRack.MainWindow, Trans(98) + cError ,Trans(97), MessageBoxButtons.OK, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button1)
 
     return page
+
+class NoContentError(Exception):
+    pass
 
 ''' 
 Process an album number string and separate Main/Alternate Number and check if main number is an integer
