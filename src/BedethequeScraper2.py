@@ -123,7 +123,7 @@ LAST_FIRST_NAMES = re.compile(LAST_FIRST_NAMES_PATTERN)
 # Info Serie
 SERIE_LIST_PATTERN = r'<a\shref="https://www.bedetheque.com/serie-(.*?)">.+?class="bdt-liste-libelle">\s+<b>(.+?)</b>'
 
-SERIE_LIST_CHECK_PATTERN = r'séries\strouvées{40,80}?La\srecherche\srenvoie\splus\sde'
+SERIE_LIST_CHECK_PATTERN = r'séries\strouvées.{40,80}?La\srecherche\srenvoie\splus\sde'
 SERIE_LIST_CHECK = re.compile(SERIE_LIST_CHECK_PATTERN, re.IGNORECASE | re.DOTALL)
 
 SERIE_URL_PATTERN = r'<a href="([^"]+?)">(?:(?!</a>).)+?<span class="bdt-liste-libelle"><b>%s</b></span>'
@@ -230,7 +230,7 @@ REVUE_LIST_PATTERN = r'<a\shref="https://www.bedetheque.com/revue-(.*?)">.+?clas
 REVUE_LIST_EXISTS_PATTERN = r'<h2>\d{1,3} revue\w?? trouvée\w??</h2>'
 REVUE_LIST_EXISTS = re.compile(REVUE_LIST_EXISTS_PATTERN, re.IGNORECASE | re.DOTALL)
 
-REVUE_LIST_CHECK_PATTERN = r'revues\strouvées{40,80}?La\srecherche\srenvoie\splus\sde'
+REVUE_LIST_CHECK_PATTERN = r'revues\strouvées.{40,80}?La\srecherche\srenvoie\splus\sde'
 REVUE_LIST_CHECK = re.compile(REVUE_LIST_CHECK_PATTERN, re.IGNORECASE | re.DOTALL)
 
 REVUE_HEADER_PATTERN = r'class="couv"(.{1,100}?couvertures"\shref="(https.{1,150}?)">.{1,600}?class="titre".{1,100}?#(%s)\..+?class="autres".+?)</li>'
@@ -247,6 +247,9 @@ REVUE_DEPOT = re.compile(REVUE_DEPOT_PATTERN, re.IGNORECASE | re.MULTILINE | re.
 
 REVUE_PERIOD_PATTERN = r'<label>P.riodicit.\s:\s??</label>(.*?)</'
 REVUE_PERIOD = re.compile(REVUE_PERIOD_PATTERN, re.IGNORECASE | re.MULTILINE | re.DOTALL)
+
+REVUE_EDITEUR_PATTERN = r'<label>Editeur\s:\s?</label>(.*?)</'
+REVUE_EDITEUR = re.compile(REVUE_EDITEUR_PATTERN, re.IGNORECASE | re.MULTILINE | re.DOTALL)
 
 #@Name Bedetheque Scraper 2
 #@Key Bedetheque2
@@ -528,7 +531,8 @@ def SetSerieId(book, serie, num, nBooksIn):
 
         ListSeries = list()
         log_Debug.log("Nom de Série pour recherche = " + sSerieNameClean)
-        urlN = '/search/tout?RechTexte=' + remove_accents(sSerieNameClean.lower().strip()) +'&RechWhere=0'
+        # RechWhere: 0=Tout le site, 7=Toute la bédéthèque, 9=Revues, 10=Séries
+        urlN = '/search/tout?RechTexte=' + remove_accents(sSerieNameClean.lower().strip()) +'&RechWhere=7'
 
         log_Debug.log(Trans(113), 'www.bedetheque.com' + urlN)
 
@@ -841,17 +845,6 @@ def parseSerieInfo(book, serieUrl, lDirect):
                     count = checkWebChar(nameRegex.group(1))
                     book.SetCustomValue("bedetheque_serie_total_album_count", str(int(count)))
     
-                #Notes-Rating
-                #if CBRating:
-                #    nameRegex = SERIE_NOTE.search(Entete)
-                #    if nameRegex:
-                #        note = nameRegex.group('note')
-                #    else:
-                #        note = "0.0"
-    
-                #    book.CommunityRating = float(note) / 2
-                #    log_Debug.log(Trans(58) + str(float(note) / 2))
-                
                 # Number of...
                 if CBCount and not lDirect:
                     count = 0
@@ -1019,17 +1012,6 @@ def parseRevueInfo(book, SerieInfoRegex, serieUrl, Numero = "", serie = ""):
             cResume = if_else(resume, Trans(52), Trans(53))
             log_Debug.log(cResume)
 
-        #Notes-Rating
-        if CBRating:
-            nameRegex = SERIE_NOTE.search(Entete)
-            if nameRegex:
-                note = nameRegex.group('note')
-            else:
-                note = "0.0"
-
-            book.CommunityRating = float(note)
-            log_Debug.log(Trans(58) + str(float(note)))
-
         #Couverture
         # Cover Image only for fileless
         if CBCover and not book.FilePath:
@@ -1058,7 +1040,7 @@ def parseRevueInfo(book, SerieInfoRegex, serieUrl, Numero = "", serie = ""):
 
         #Editeur
         if CBEditor:
-            nameRegex = ALBUM_EDITEUR.search(Entete, 0)
+            nameRegex = REVUE_EDITEUR.search(Entete, 0)
             if nameRegex:
                 editeur = parseName(nameRegex.group(1))
                 book.Publisher = editeur
@@ -1090,7 +1072,21 @@ def parseRevueInfo(book, SerieInfoRegex, serieUrl, Numero = "", serie = ""):
         if CBWeb == True and not CBRescrape:
             book.Web = serieUrl
             log_Debug.log(Trans(123), book.Web)
-
+            
+        # Reset other fields
+        book.SeriesComplete = YesNo.Unknown
+        book.BlackAndWhite = YesNo.Unknown
+        book.AlternateNumber = ""
+        book.Tags = ""
+        book.Writer = ""
+        book.Penciller = ""
+        book.CoverArtist = ""
+        book.Letterer = ""
+        book.Inker = ""
+        book.ISBN = ""        
+        book.Imprint = ""
+        book.CommunityRating = 0.0
+        
         if CBNotes:
             write_book_notes(book)
 
