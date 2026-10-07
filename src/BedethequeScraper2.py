@@ -171,7 +171,7 @@ SERIE_QSERIE = re.compile(SERIE_QSERIE_PATTERN, re.IGNORECASE | re.MULTILINE | r
 ALBUM_BDTHEQUE_NOTNUM_PATTERN = r'tails">.*?<span\sclass="numa"></span>.*?<a name="(.*?)"'
 ALBUM_BDTHEQUE_NOTNUM = re.compile(ALBUM_BDTHEQUE_NOTNUM_PATTERN, re.IGNORECASE | re.MULTILINE | re.DOTALL)
 
-ALBUM_EVAL_PATTERN = r'Note: <span itemprop="ratingValue">(.*?)<'
+ALBUM_EVAL_PATTERN = r'ratingValue">(.*?)<'
 ALBUM_EVAL = re.compile(ALBUM_EVAL_PATTERN, re.IGNORECASE | re.MULTILINE | re.DOTALL)
 
 ALBUM_MULTI_AUTHOR_NAMES_PATTERN = r'">([^<>]*?)</'
@@ -892,8 +892,7 @@ def parseSerieInfo(book, serieUrl, lDirect):
                 </a>
             </li>
             """
-            Regex = re.compile(r'<li>\s+?<a href="(?P<url>[^"]+?)" title="(?P<title>[^"]+?)">.+?class="bdt-box-albums-num"[^<>]+?>(?P<tome>[^<>]*?)<span class="bdt-numa">(?P<alt>[^<>]*?)<', re.IGNORECASE | re.DOTALL)
-
+            Regex = re.compile(r'<li[^>]*>\s+?<a href="(?P<url>[^"]+?)" title="(?P<title>[^"]+?)">.+?class="bdt-box-albums-num"[^<>]+?>(?P<tome>[^<>]*?)<span class="bdt-numa">(?P<alt>[^<>]*?)<', re.IGNORECASE | re.DOTALL)
             i = 0
             ListAlbum, ListAlbumAll = list(), list()
             for r in Regex.finditer(request):
