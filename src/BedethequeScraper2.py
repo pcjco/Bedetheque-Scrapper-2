@@ -132,7 +132,7 @@ SERIE_URL_PATTERN = r'<a href="([^"]+?)">(?:(?!</a>).)+?<span class="bdt-liste-l
 INFOS_ALBUMS_PATTERN = r'<dl class="bdt-sheet">.+?</div>'
 INFOS_ALBUMS = re.compile(INFOS_ALBUMS_PATTERN, re.IGNORECASE | re.DOTALL)
 
-SERIE_ORIGIN_PATTERN = r'<li[^<>]+?(?<="Origine de la série").+?class="bdt-sh-flag"[^<>]+?>([^<>]+?)<'
+SERIE_ORIGIN_PATTERN = r'<li[^>]*title="Origine de la série">([^<>]+?)<'
 SERIE_ORIGIN = re.compile(SERIE_ORIGIN_PATTERN, re.IGNORECASE)
 
 SERIE_LANGUE_PATTERN = r'<li[^<>]+?(?<="Langue de parution").+?class="bdt-sh-flag"[^<>]+?>([^<>]+?)<'
@@ -816,6 +816,7 @@ def parseSerieInfo(book, serieUrl, lDirect):
             nameRegex = SERIE_ORIGIN.search(Entete)
             if nameRegex:
                 origin = nameRegex.group(1).strip()
+                log_Debug.log("Origin: " + origin)
                 book.SetCustomValue("bedetheque_origin", origin)
 
             # Language
