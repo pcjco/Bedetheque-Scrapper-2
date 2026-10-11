@@ -168,9 +168,6 @@ SERIE_QSERIE = re.compile(SERIE_QSERIE_PATTERN, re.IGNORECASE | re.MULTILINE | r
 
 # Info Album from Album
 
-ALBUM_BDTHEQUE_NOTNUM_PATTERN = r'tails">.*?<span\sclass="numa"></span>.*?<a name="(.*?)"'
-ALBUM_BDTHEQUE_NOTNUM = re.compile(ALBUM_BDTHEQUE_NOTNUM_PATTERN, re.IGNORECASE | re.MULTILINE | re.DOTALL)
-
 ALBUM_EVAL_PATTERN = r'ratingValue">(.*?)<'
 ALBUM_EVAL = re.compile(ALBUM_EVAL_PATTERN, re.IGNORECASE | re.MULTILINE | re.DOTALL)
 
@@ -1175,40 +1172,6 @@ def parseAlbumInfo(book, pageUrl, num, cached_html = None):
         if ID_ALBUM_PATT:
             ID_ALBUM = ID_ALBUM_PATT.group(1)
             AlbumBDThequeNum = ID_ALBUM
-
-    else:
-        Result = MessageBox.Show(ComicRack.MainWindow, "We pass in code that we think is not used!!!","Warning", MessageBoxButtons.OK, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button1)
-
-        # Album N. est Numerique
-        if sAlbumNum or sAlbumAltNum:
-            ALBUM_BDTHEQUE_NUM_PATTERN = r'tails">%s<span\sclass="numa">%s</span>.*?<a name="(.*?)"'
-            ALBUM_BDTHEQUE_NUM = re.compile(ALBUM_BDTHEQUE_NUM_PATTERN % (num, sAlbumAltNum), re.IGNORECASE | re.MULTILINE | re.DOTALL)
-
-            nameRegex = ALBUM_BDTHEQUE_NUM.search(albumHTML)
-
-            if nameRegex:
-                AlbumBDThequeNum = nameRegex.group(1)
-            else:
-                ALBUM_BDTHEQUE_NUM_PATTERN = r'>%s<span\sclass="numa">.*?</span>.*?<a name="(.*?)"'
-                ALBUM_BDTHEQUE_NUM = re.compile(ALBUM_BDTHEQUE_NUM_PATTERN % num, re.IGNORECASE | re.MULTILINE | re.DOTALL)
-                nameRegex = ALBUM_BDTHEQUE_NUM.search(albumHTML)
-                if nameRegex:
-                    AlbumBDThequeNum = nameRegex.group(1)
-                else:
-                    # Album not found
-                    nameRegex = ""
-                    return False
-
-        # Album N. in Lettres
-        else:
-            nameRegex = ALBUM_BDTHEQUE_NOTNUM.search(albumHTML)
-            if nameRegex:
-                AlbumBDThequeNum = nameRegex.group(1)
-
-            else:
-
-                nameRegex = ""
-                return False
 
     try:
         i = 0
