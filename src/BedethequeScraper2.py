@@ -46,7 +46,7 @@ clr.AddReference('System.Xml')
 from System.Xml import *
 BasicXml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><configuration></configuration>"
 
-VERSION = "6.05"
+VERSION = "6.07"
 
 class SerieChoice:
     NeverAsk = 0
@@ -121,7 +121,7 @@ LAST_FIRST_NAMES = re.compile(LAST_FIRST_NAMES_PATTERN)
 
 ########################################
 # Info Serie
-SERIE_LIST_PATTERN = r'<a\shref="https://www.bedetheque.com/serie-(.*?)">.+?class="bdt-liste-libelle">\s+<b>(.+?)</b>'
+SERIE_LIST_PATTERN = r'<a\shref="https://www.bedetheque.com/serie-([^<>"]*?)">.+?class="bdt-liste-libelle">.*?<b>(.+?)</b>.+?</a>'
 
 SERIE_LIST_CHECK_PATTERN = r'séries\strouvées.{40,80}?La\srecherche\srenvoie\splus\sde'
 SERIE_LIST_CHECK = re.compile(SERIE_LIST_CHECK_PATTERN, re.IGNORECASE | re.DOTALL)
@@ -163,7 +163,7 @@ SERIE_HEADER2_PATTERN = r'<h3(.+?)</p'
 SERIE_HEADER2 = re.compile(SERIE_HEADER2_PATTERN, re.IGNORECASE | re.MULTILINE | re.DOTALL)
 
 # Info Serie for Quickscrape
-SERIE_QSERIE_PATTERN = r'<h1>\s*<a href="[^<>]+/serie-[^\.]+\.html">([^"<>]+)</a>'
+SERIE_QSERIE_PATTERN = r'<h1>.+?<a href="[^<>]+/serie-[^\.]+\.html">([^"<>]+)</a>.*?</h1>'
 SERIE_QSERIE = re.compile(SERIE_QSERIE_PATTERN, re.IGNORECASE | re.MULTILINE | re.DOTALL)
 
 # Info Album from Album
@@ -222,7 +222,7 @@ ALBUM_INFOEDITION = re.compile(ALBUM_INFOEDITION_PATTERN, re.IGNORECASE | re.MUL
 
 ########################################
 # Info Revues
-REVUE_LIST_PATTERN = r'<a\shref="https://www.bedetheque.com/revue-(.*?)">.+?class="bdt-liste-libelle">\s+<b>(.+?)</b>'
+REVUE_LIST_PATTERN = r'<a\shref="https://www.bedetheque.com/revue-([^<>"]*?)">.+?class="bdt-liste-libelle">.*?<b>(.+?)</b>.+?</a>'
 
 REVUE_LIST_EXISTS_PATTERN = r'<h2>\d{1,3} revue\w?? trouvée\w??</h2>'
 REVUE_LIST_EXISTS = re.compile(REVUE_LIST_EXISTS_PATTERN, re.IGNORECASE | re.DOTALL)
@@ -1406,10 +1406,11 @@ def parseAlbumInfo(book, pageUrl, num, cached_html = None):
 
             # Album summary is optional => So, there is a specific research
             if CBSynopsys:
-                summary = ""
+                summary, resume = "", ""
                 # Summary on page is truncated, so we need to fetch the summary via the ajax pageUrl -> baseurl + "ajax/resume/album/" + id
-                summaryUrl = "ajax/resume/album/" + bookId
-                resume = _read_url(summaryUrl, False)
+                if AlbumBDThequeNum:
+                    summaryUrl = "ajax/resume/album/" + AlbumBDThequeNum
+                    resume = _read_url(summaryUrl, False)
                 if resume:
                     resume = strip_tags(resume).strip()
                     PrintSerieResume = True if SerieResumeEverywhere else book.Number == '1'
