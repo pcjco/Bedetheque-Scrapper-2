@@ -30,7 +30,7 @@ from System.Windows.Forms import *
 from System.IO import FileInfo, File
 from System.Diagnostics import ProcessStartInfo, Process
 from System.Diagnostics.Process import Start
-from System.Net import HttpWebRequest
+from System.Net import HttpWebRequest, WebUtility
 from System.Net.Sockets import TcpClient, SocketType, ProtocolType
 from System.Threading import Thread, ThreadStart
 from System import Math
@@ -1412,7 +1412,7 @@ def parseAlbumInfo(book, pageUrl, num, cached_html = None):
                     summaryUrl = "ajax/resume/album/" + AlbumBDThequeNum
                     resume = _read_url(summaryUrl, False)
                 if resume:
-                    resume = strip_tags(resume).strip()
+                    resume = strip_tags(checkWebChar(resume)).strip()                    
                     PrintSerieResume = True if SerieResumeEverywhere else book.Number == '1'
                     if Serie_Resume and PrintSerieResume and remove_accents(Serie_Resume) != remove_accents(resume):
                         summary = Serie_Resume + if_else(resume, chr(10) + chr(10) + if_else(book.Title, '>' + book.Title + '< ' + chr(10), "") + resume, "")                    
@@ -1427,7 +1427,7 @@ def parseAlbumInfo(book, pageUrl, num, cached_html = None):
                 nameRegex = ALBUM_INFOEDITION.search(info, 0)
                 if nameRegex:
                     if nameRegex.group(1) !=" &nbsp;":
-                        infoedition = strip_tags(nameRegex.group(1)).strip()
+                        infoedition = strip_tags(checkWebChar(nameRegex.group(1))).strip()
                         if infoedition:
                             summary = if_else(summary != "",summary + chr(10) + chr(10) + Trans(118) + infoedition,Trans(118) + infoedition)
                         log_Debug.log(Trans(118) + Trans(119))
@@ -1899,6 +1899,9 @@ def checkWebChar(strIn):
     strIn = re.sub('\xc3', u'\xc3', strIn)
     strIn = re.sub('\xa2', u'\xa2', strIn)
     strIn = re.sub('\xc3', u'\xc3', strIn)
+    strIn = re.sub('\&#039;', "'", strIn)
+
+    strIn = WebUtility.HtmlDecode(strIn)
 
     return strIn 
 
