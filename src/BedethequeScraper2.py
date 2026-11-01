@@ -46,7 +46,7 @@ clr.AddReference('System.Xml')
 from System.Xml import *
 BasicXml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><configuration></configuration>"
 
-VERSION = "6.07"
+VERSION = "6.08"
 
 class SerieChoice:
     NeverAsk = 0
@@ -812,7 +812,7 @@ def parseSerieInfo(book, serieUrl, lDirect):
 
                 log_Debug.log(Trans(57) + SerieState + if_else(sAlbumNum.lower() == "one shot", " (One Shot)", ""))
 
-            # Find region of origin of a Serie (Asia, Europe,...)
+            # Find region of origin of a Serie (Comics, Franco-Belge, Manga, Autre, ...)
             nameRegex = SERIE_ORIGIN.search(Entete)
             if nameRegex:
                 origin = nameRegex.group(1).strip()
@@ -851,7 +851,6 @@ def parseSerieInfo(book, serieUrl, lDirect):
                         book.Count = -1
                         cCountText = "---"
                     elif not COUNTOF:
-                        log_Debug.log('2')
                         nameRegex = SERIE_COUNT.search(Entete2)
                         if nameRegex:
                             count = checkWebChar(nameRegex.group(1))
@@ -972,7 +971,7 @@ def parseRevueInfo(book, SerieInfoRegex, serieUrl, Numero = "", serie = ""):
 
         if Numero:
             try:
-                book.Number = Numero
+                book.Number = checkWebChar(Numero)
                 log_Debug.log(Trans(115), book.Number)
             except:
                 book.Number = ""
@@ -990,7 +989,7 @@ def parseRevueInfo(book, SerieInfoRegex, serieUrl, Numero = "", serie = ""):
         if CBTitle:
             nameRegex = re.search(r'<h3 class="titre".+?</span>(.+?)</h3>', Entete, re.IGNORECASE | re.DOTALL | re.MULTILINE)
             if nameRegex: 
-                book.Title = titlize(nameRegex.group(1).strip())
+                book.Title = titlize(checkWebChar(nameRegex.group(1)).strip())
             log_Debug.log(Trans(29), book.Title)
 
         #genre
@@ -3554,8 +3553,8 @@ class SeriesForm(Form):
                 title = ""
                 if self.formType == FormType.EDITION: 
                     title = self.List[x][1].Title
-                else: 
-                    title = self.List[x][1]
+                else:
+                    title = checkWebChar(self.List[x][1])
                 
                 display = "(" + self.List[x][2] + ") - " + title + if_else(self.List[x][0], "   (", "") + self.List[x][0] + if_else(self.List[x][0], ")", "")
                 if filter and filter not in display.lower():
